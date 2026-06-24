@@ -11,3 +11,10 @@
 ### Domain docs
 
 使用 single-context 布局：根目录 `CONTEXT.md` 加根目录 `docs/adr/`。见 `docs/agents/domain.md`。
+
+## Local execution notes
+
+- On Windows, start the Next dev server with `npm.cmd`, not bare `npm`.
+- On Windows, PowerShell scripts should avoid `$host` as a variable name because `$Host` is built in and read-only.
+- If the Next dev server fails with `spawn EPERM` under sandboxing, do not retry repeatedly; use approved dev-server escalation or switch to HTTP-level smoke checks.
+
