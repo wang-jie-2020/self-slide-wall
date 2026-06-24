@@ -34,6 +34,7 @@ model AudienceSession {
   createdAt         DateTime           @default(now())
   activity          Activity           @relation(fields: [activityId], references: [id])
   audienceQuestions AudienceQuestion[]
+  questionLikes     QuestionLike[]
 }
 
 model AudienceQuestion {
@@ -47,6 +48,7 @@ model AudienceQuestion {
   isHidden          Boolean         @default(false)
   activity          Activity        @relation(fields: [activityId], references: [id])
   audienceSession   AudienceSession @relation(fields: [audienceSessionId], references: [id])
+  questionLikes     QuestionLike[]
 
   @@index([activityId, isHidden, isAnswered, createdAt])
 }
@@ -55,4 +57,16 @@ enum ActivityState {
   DRAFT
   LIVE
   ENDED
+}
+
+model QuestionLike {
+  id                 String           @id @default(cuid())
+  audienceQuestionId String
+  audienceSessionId  String
+  createdAt          DateTime         @default(now())
+  audienceQuestion   AudienceQuestion @relation(fields: [audienceQuestionId], references: [id])
+  audienceSession    AudienceSession  @relation(fields: [audienceSessionId], references: [id])
+
+  @@unique([audienceQuestionId, audienceSessionId])
+  @@index([audienceQuestionId])
 }

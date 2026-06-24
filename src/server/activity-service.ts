@@ -19,6 +19,9 @@ type AudienceQuestionRecord = {
   audienceSession: {
     displayName: string | null;
   };
+  _count?: {
+    questionLikes: number;
+  };
 };
 
 export type RouteActivityContext = {
@@ -252,6 +255,60 @@ export async function submitAudienceQuestion(input: {
   return toAudienceQuestion(question);
 }
 
+export async function toggleQuestionLike(input: {
+  questionId: string;
+  audienceSessionId: string;
+}) {
+  const question = await prisma.audienceQuestion.findFirst({
+    where: {
+      id: input.questionId,
+      isHidden: false,
+      isAnswered: false
+    },
+    include: {
+      activity: { select: { state: true } }
+    }
+  });
+  if (!question) {
+    throw new RequestError("找不到可点赞的观众问题。", 404);
+  }
+  if (question.activity.state !== "LIVE") {
+    throw new RequestError("只有进行中活动可以点赞。", 409);
+  }
+
+  const audienceSession = await prisma.audienceSession.findFirst({
+    where: {
+      id: input.audienceSessionId,
+      activityId: question.activityId
+    },
+    select: { id: true }
+  });
+  if (!audienceSession) {
+    throw new RequestError("找不到此活动的观众会话。", 404);
+  }
+
+  const existing = await prisma.questionLike.findUnique({
+    where: {
+      audienceQuestionId_audienceSessionId: {
+        audienceQuestionId: question.id,
+        audienceSessionId: audienceSession.id
+      }
+    }
+  });
+  if (existing) {
+    throw new RequestError("已经点过赞了。", 409);
+  }
+
+  await prisma.questionLike.create({
+    data: {
+      audienceQuestionId: question.id,
+      audienceSessionId: audienceSession.id
+    }
+  });
+
+  return { liked: true };
+}
+
 export function audienceQuestionMutationNotAllowed() {
   return new RequestError("观众问题提交后不能由观众编辑或删除。", 405);
 }
@@ -320,6 +377,11 @@ function visibleQuestionInclude() {
         select: {
           displayName: true
         }
+      },
+      _count: {
+        select: {
+          questionLikes: true
+        }
       }
     },
     orderBy: [{ isPinned: "desc" as const }, { createdAt: "asc" as const }]
@@ -334,7 +396,8 @@ function toAudienceQuestion(question: AudienceQuestionRecord) {
     displayName: question.audienceSession.displayName,
     text: question.text,
     createdAt: question.createdAt,
-    isPinned: question.isPinned
+    isPinned: question.isPinned,
+    likeCount: question._count?.questionLikes ?? 0
   };
 }
 
@@ -343,10 +406,26 @@ function withVisibleQuestions<
 >(activity: TActivity) {
   const { audienceQuestions, ...visibleActivity } = activity;
 
+  const questions = audienceQuestions.map(toAudienceQuestion);
+  questions.sort(compareQuestionSort);
+
   return {
     ...visibleActivity,
-    questions: audienceQuestions.map(toAudienceQuestion)
+    questions
   };
+}
+
+function compareQuestionSort(
+  a: ReturnType<typeof toAudienceQuestion>,
+  b: ReturnType<typeof toAudienceQuestion>
+): number {
+  if (a.isPinned !== b.isPinned) {
+    return a.isPinned ? -1 : 1;
+  }
+  if (a.likeCount !== b.likeCount) {
+    return b.likeCount - a.likeCount;
+  }
+  return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
 }
 
 export class RequestError extends Error {

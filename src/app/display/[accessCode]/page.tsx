@@ -9,6 +9,7 @@ type AudienceQuestion = {
   displayName: string | null;
   createdAt: string;
   isPinned: boolean;
+  likeCount: number;
 };
 
 type DisplayActivity = {
@@ -70,9 +71,17 @@ export default function DisplayPage() {
                     className="rounded-md border border-stone-700 bg-stone-900 p-5"
                     key={question.id}
                   >
+                    {question.isPinned ? (
+                      <p className="mb-2 text-sm font-medium text-amber-300">
+                        置顶
+                      </p>
+                    ) : null}
                     <p className="text-2xl leading-relaxed">{question.text}</p>
-                    <p className="mt-3 text-base text-stone-400">
-                      {question.displayName ?? "匿名观众"}
+                    <p className="mt-3 flex items-center gap-4 text-base text-stone-400">
+                      <span>{question.displayName ?? "匿名观众"}</span>
+                      <span className="text-emerald-300">
+                        ♥ {question.likeCount}
+                      </span>
                     </p>
                   </li>
                 ))}

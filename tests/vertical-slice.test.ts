@@ -16,6 +16,7 @@ import {
   PATCH as updateAudienceQuestion
 } from "../src/app/api/audience/questions/[questionId]/route";
 import { GET as getDisplayActivity } from "../src/app/api/display/activities/[accessCode]/route";
+import { POST as likeAudienceQuestion } from "../src/app/api/audience/questions/[questionId]/like/route";
 import { prisma } from "../src/server/prisma";
 
 async function json(response: Response) {
@@ -534,3 +535,356 @@ describe("issue #4 audience question submission", () => {
     ]);
   });
 });
+
+describe("issue #5 question likes and sorting", () => {
+  async function likeQuestion(questionId: string, audienceSessionId: string) {
+    const response = await likeAudienceQuestion(
+      postRequest(`http://localhost/api/audience/questions/${questionId}/like`, {
+        audienceSessionId
+      }),
+      routeQuestionId(questionId)
+    );
+    return response;
+  }
+  it("lets an audience session like a visible question during a live activity", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode, "小王");
+    const audienceSession = joined.body.audienceSession;
+    expect(audienceSession).toBeDefined();
+
+    const submitResponse = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: audienceSession?.id,
+          text: "能不能多讲一下 TypeScript？"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    expect(submitResponse.status).toBe(201);
+    const submitBody = (await json(submitResponse)) as {
+      question: { id: string; text: string };
+    };
+
+    const likeResponse = await likeQuestion(
+      submitBody.question.id,
+      audienceSession?.id ?? ""
+    );
+    expect(likeResponse.status).toBe(201);
+    const likeBody = (await json(likeResponse)) as {
+      liked?: boolean;
+      error?: string;
+    };
+    expect(likeBody.liked).toBe(true);
+
+    const audienceResponse = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceResponse)) as {
+      activity: { questions: Array<{ id: string; likeCount: number }> };
+    };
+    expect(audienceBody.activity.questions[0]).toMatchObject({
+      id: submitBody.question.id,
+      likeCount: 1
+    });
+  });
+
+  it("prevents a single audience session from liking the same question twice", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+    const audienceSession = joined.body.audienceSession;
+
+    const submitResponse = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: audienceSession?.id,
+          text: "一个问题"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const submitBody = (await json(submitResponse)) as {
+      question: { id: string };
+    };
+
+    const first = await likeQuestion(
+      submitBody.question.id,
+      audienceSession?.id ?? ""
+    );
+    expect(first.status).toBe(201);
+
+    const second = await likeQuestion(
+      submitBody.question.id,
+      audienceSession?.id ?? ""
+    );
+    expect(second.status).toBe(409);
+
+    const audienceResponse = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceResponse)) as {
+      activity: { questions: Array<{ id: string; likeCount: number }> };
+    };
+    expect(audienceBody.activity.questions[0].likeCount).toBe(1);
+  });
+
+  it("allows multiple audience sessions to like the same question", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const alice = await joinActivity(activity.accessCode, "Alice");
+    const bob = await joinActivity(activity.accessCode, "Bob");
+
+    const submitResponse = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: alice.body.audienceSession?.id,
+          text: "多人点赞的问题"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const submitBody = (await json(submitResponse)) as {
+      question: { id: string };
+    };
+
+    const aliceLike = await likeQuestion(
+      submitBody.question.id,
+      alice.body.audienceSession?.id ?? ""
+    );
+    expect(aliceLike.status).toBe(201);
+
+    const bobLike = await likeQuestion(
+      submitBody.question.id,
+      bob.body.audienceSession?.id ?? ""
+    );
+    expect(bobLike.status).toBe(201);
+
+    const audienceResponse = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceResponse)) as {
+      activity: { questions: Array<{ id: string; likeCount: number }> };
+    };
+    expect(audienceBody.activity.questions[0].likeCount).toBe(2);
+  });
+
+  it("rejects likes when the activity is not live", async () => {
+    const activity = await createDraftActivity();
+    const joined = await joinActivity(activity.accessCode);
+
+    await moveActivity(activity.id, "start");
+    const submitResponse = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: joined.body.audienceSession?.id,
+          text: "活动结束后不能点赞"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const submitBody = (await json(submitResponse)) as {
+      question: { id: string };
+    };
+    await moveActivity(activity.id, "end");
+
+    const likeResponse = await likeQuestion(
+      submitBody.question.id,
+      joined.body.audienceSession?.id ?? ""
+    );
+    expect(likeResponse.status).toBe(409);
+  });
+
+  it("sorts visible unanswered questions by like count desc then createdAt asc", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const alice = await joinActivity(activity.accessCode, "Alice");
+    const bob = await joinActivity(activity.accessCode, "Bob");
+
+    // Submit questions in order and note their IDs
+    const q1 = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: alice.body.audienceSession?.id,
+          text: "第一个问题"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const q1Body = (await json(q1)) as { question: { id: string } };
+
+    const q2 = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: alice.body.audienceSession?.id,
+          text: "第二个问题"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const q2Body = (await json(q2)) as { question: { id: string } };
+
+    const q3 = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: alice.body.audienceSession?.id,
+          text: "第三个问题"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const q3Body = (await json(q3)) as { question: { id: string } };
+
+    // bob likes q2 (should move to top)
+    const bobLike = await likeQuestion(
+      q2Body.question.id,
+      bob.body.audienceSession?.id ?? ""
+    );
+    expect(bobLike.status).toBe(201);
+
+    const audienceResponse = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceResponse)) as {
+      activity: { questions: Array<{ id: string; text: string; likeCount: number }> };
+    };
+
+    // q2 (liked) should be first, then q1, then q3 (sorted by createdAt among ties)
+    expect(audienceBody.activity.questions).toHaveLength(3);
+    expect(audienceBody.activity.questions[0].id).toBe(q2Body.question.id);
+    expect(audienceBody.activity.questions[0].likeCount).toBe(1);
+    expect(audienceBody.activity.questions[1].id).toBe(q1Body.question.id);
+    expect(audienceBody.activity.questions[1].likeCount).toBe(0);
+    expect(audienceBody.activity.questions[2].id).toBe(q3Body.question.id);
+    expect(audienceBody.activity.questions[2].likeCount).toBe(0);
+  });
+
+  it("shows like counts in all three views (audience, display, host)", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode, "小王");
+
+    const submitResponse = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: joined.body.audienceSession?.id,
+          text: "大家怎么看"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const submitBody = (await json(submitResponse)) as {
+      question: { id: string };
+    };
+
+    const likeResponse = await likeQuestion(
+      submitBody.question.id,
+      joined.body.audienceSession?.id ?? ""
+    );
+    expect(likeResponse.status).toBe(201);
+
+    // Audience view
+    const audienceRes = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceRes)) as {
+      activity: { questions: Array<{ likeCount: number }> };
+    };
+    expect(audienceBody.activity.questions[0].likeCount).toBe(1);
+
+    // Display view
+    const displayRes = await getDisplayActivity(
+      new Request(`http://localhost/api/display/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const displayBody = (await json(displayRes)) as {
+      activity: { questions: Array<{ likeCount: number }> };
+    };
+    expect(displayBody.activity.questions[0].likeCount).toBe(1);
+
+    // Host console
+    const hostRes = await listHostActivities(
+      new Request("http://localhost/api/host/activities?ownerId=demo-host")
+    );
+    const hostBody = (await json(hostRes)) as {
+      activities: Array<{ questions: Array<{ likeCount: number }> }>;
+    };
+    expect(hostBody.activities[0].questions[0].likeCount).toBe(1);
+  });
+
+  it("keeps pinned questions before unpinned regardless of like count", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const alice = await joinActivity(activity.accessCode, "Alice");
+    const bob = await joinActivity(activity.accessCode, "Bob");
+
+    // Create an unpinned question and give it likes
+    const q1 = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: alice.body.audienceSession?.id,
+          text: "未置顶但很多人点赞"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const q1Body = (await json(q1)) as { question: { id: string } };
+
+    // bob likes the unpinned question
+    await likeQuestion(
+      q1Body.question.id,
+      bob.body.audienceSession?.id ?? ""
+    );
+
+    // Create a pinned question with no likes
+    const q2 = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: alice.body.audienceSession?.id,
+          text: "置顶问题"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const q2Body = (await json(q2)) as { question: { id: string } };
+
+    // Pin q2 via direct DB update
+    await prisma.audienceQuestion.update({
+      where: { id: q2Body.question.id },
+      data: { isPinned: true }
+    });
+
+    const audienceResponse = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceResponse)) as {
+      activity: { questions: Array<{ id: string; likeCount: number; isPinned: boolean }> };
+    };
+
+    expect(audienceBody.activity.questions).toHaveLength(2);
+    // Pinned question should come first despite having 0 likes vs 1 like
+    expect(audienceBody.activity.questions[0].id).toBe(q2Body.question.id);
+    expect(audienceBody.activity.questions[0].isPinned).toBe(true);
+    expect(audienceBody.activity.questions[0].likeCount).toBe(0);
+    expect(audienceBody.activity.questions[1].id).toBe(q1Body.question.id);
+    expect(audienceBody.activity.questions[1].likeCount).toBe(1);
+  });
+});
+

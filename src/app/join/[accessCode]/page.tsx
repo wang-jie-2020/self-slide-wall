@@ -10,6 +10,7 @@ type AudienceQuestion = {
   displayName: string | null;
   createdAt: string;
   isPinned: boolean;
+  likeCount: number;
 };
 
 type AudienceActivity = {
@@ -34,6 +35,8 @@ export default function JoinPage() {
   const [questionFeedback, setQuestionFeedback] = useState<string | null>(null);
   const [sessionName, setSessionName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [likingQuestionId, setLikingQuestionId] = useState<string | null>(null);
+  const [likedQuestions, setLikedQuestions] = useState<Set<string>>(new Set());
   const { data, isLoading, mutate } = useSWR<{ activity: AudienceActivity }>(
     accessCode ? `/api/audience/activities/${accessCode}` : null,
     fetcher,
@@ -82,6 +85,32 @@ export default function JoinPage() {
     setQuestionText("");
     setQuestionFeedback("观众问题已提交。");
     await mutate();
+  }
+
+  async function likeQuestion(questionId: string) {
+    if (!audienceSessionId) return;
+    setLikingQuestionId(questionId);
+    setError(null);
+
+    const response = await fetch(`/api/audience/questions/${questionId}/like`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ audienceSessionId })
+    });
+    const body = (await response.json()) as { error?: string; liked?: boolean };
+
+    if (!response.ok) {
+      if (response.status === 409) {
+        setError(body.error ?? "已经点过赞了。");
+      } else {
+        setError(body.error ?? "点赞失败。");
+      }
+    } else {
+      setLikedQuestions((prev) => new Set(prev).add(questionId));
+      await mutate();
+    }
+
+    setLikingQuestionId(null);
   }
 
   return (
@@ -170,21 +199,58 @@ export default function JoinPage() {
             <h2 className="text-lg font-semibold text-stone-950">观众问题</h2>
             {data.activity.questions.length > 0 ? (
               <ul className="flex flex-col gap-3">
-                {data.activity.questions.map((question) => (
-                  <li
-                    className="rounded-md border border-stone-300 bg-white p-4 shadow-sm"
-                    key={question.id}
-                  >
-                    <p className="text-stone-950">{question.text}</p>
-                    <p className="mt-2 text-sm text-stone-500">
-                      {question.displayName ?? "匿名观众"} ·{" "}
-                      {new Date(question.createdAt).toLocaleTimeString("zh-CN", {
-                        hour: "2-digit",
-                        minute: "2-digit"
-                      })}
-                    </p>
-                  </li>
-                ))}
+                {data.activity.questions.map((question) => {
+                  const alreadyLiked = likedQuestions.has(question.id);
+                  const canLike =
+                    data.activity.acceptsInteraction &&
+                    audienceSessionId &&
+                    !alreadyLiked;
+
+                  return (
+                    <li
+                      className="rounded-md border border-stone-300 bg-white p-4 shadow-sm"
+                      key={question.id}
+                    >
+                      {question.isPinned ? (
+                        <p className="mb-1 text-xs font-medium text-amber-700">
+                          置顶
+                        </p>
+                      ) : null}
+                      <p className="text-stone-950">{question.text}</p>
+                      <div className="mt-2 flex items-center gap-3 text-sm text-stone-500">
+                        <span>
+                          {question.displayName ?? "匿名观众"} ·{" "}
+                          {new Date(question.createdAt).toLocaleTimeString("zh-CN", {
+                            hour: "2-digit",
+                            minute: "2-digit"
+                          })}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <button
+                            className={
+                              alreadyLiked
+                                ? "text-emerald-700"
+                                : canLike
+                                  ? "text-stone-400 hover:text-emerald-700"
+                                  : "text-stone-300"
+                            }
+                            disabled={!canLike || likingQuestionId === question.id}
+                            onClick={() => void likeQuestion(question.id)}
+                            title={alreadyLiked ? "已点赞" : "点赞"}
+                            type="button"
+                          >
+                            {likingQuestionId === question.id
+                              ? "点赞中..."
+                              : alreadyLiked
+                                ? "♥"
+                                : "♡"}
+                          </button>
+                          <span>{question.likeCount}</span>
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <p className="rounded-md border border-stone-300 bg-white p-4 text-sm text-stone-600">

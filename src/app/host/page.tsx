@@ -10,6 +10,7 @@ type AudienceQuestion = {
   displayName: string | null;
   createdAt: string;
   isPinned: boolean;
+  likeCount: number;
 };
 
 type Activity = {
@@ -199,13 +200,21 @@ export default function HostPage() {
                           className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2"
                           key={question.id}
                         >
-                          <p className="text-sm text-stone-950">{question.text}</p>
+                          {question.isPinned ? (
+                            <span className="mr-2 rounded-sm bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
+                              置顶
+                            </span>
+                          ) : null}
+                          <p className="inline text-sm text-stone-950">
+                            {question.text}
+                          </p>
                           <p className="mt-1 text-xs text-stone-500">
                             {question.displayName ?? "匿名观众"} ·{" "}
                             {new Date(question.createdAt).toLocaleTimeString("zh-CN", {
                               hour: "2-digit",
                               minute: "2-digit"
-                            })}
+                            })} · ♥{" "}
+                            {question.likeCount}
                           </p>
                         </li>
                       ))}
