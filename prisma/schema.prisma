@@ -1,0 +1,40 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model HostAccount {
+  id         String     @id
+  name       String
+  activities Activity[]
+}
+
+model Activity {
+  id                String            @id @default(cuid())
+  title             String
+  accessCode        String            @unique
+  createdAt         DateTime          @default(now())
+  state             ActivityState     @default(DRAFT)
+  questionCharLimit Int               @default(240)
+  ownerId           String
+  owner             HostAccount       @relation(fields: [ownerId], references: [id])
+  audienceSessions  AudienceSession[]
+}
+
+model AudienceSession {
+  id          String   @id @default(cuid())
+  activityId  String
+  displayName String?
+  createdAt   DateTime @default(now())
+  activity    Activity @relation(fields: [activityId], references: [id])
+}
+
+enum ActivityState {
+  DRAFT
+  LIVE
+  ENDED
+}

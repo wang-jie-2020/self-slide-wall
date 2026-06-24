@@ -6,3 +6,9 @@ Thumbs.db
 /.agents
 /out
 /output
+/.next
+/node_modules
+/coverage
+/tsconfig.tsbuildinfo
+/prisma/dev.db
+/prisma/dev.db-journal
