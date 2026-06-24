@@ -16,6 +16,8 @@ type AudienceQuestionRecord = {
   text: string;
   createdAt: Date;
   isPinned: boolean;
+  isAnswered: boolean;
+  isHidden: boolean;
   audienceSession: {
     displayName: string | null;
   };
@@ -82,14 +84,14 @@ export async function listOwnedActivities(ownerId?: string) {
       deletedAt: null
     },
     include: {
-      audienceQuestions: visibleQuestionInclude()
+      audienceQuestions: hostQuestionInclude()
     },
     orderBy: {
       createdAt: "desc"
     }
   });
 
-  return activities.map(withVisibleQuestions);
+  return activities.map(withAllQuestions);
 }
 
 export async function startActivity(activityId: string) {
@@ -174,7 +176,7 @@ export async function getAudienceActivity(accessCode: string) {
   }
 
   return {
-    ...withVisibleQuestions(activity),
+    ...withPublicQuestions(activity),
     acceptsInteraction: activity.state === "LIVE",
     audienceNotice:
       activity.state === "DRAFT"
@@ -199,7 +201,7 @@ export async function getDisplayActivity(accessCode: string, origin: string) {
   });
 
   return {
-    ...withVisibleQuestions(activity),
+    ...withPublicQuestions(activity),
     joinUrl,
     qrCodeDataUrl
   };
@@ -309,6 +311,89 @@ export async function toggleQuestionLike(input: {
   return { liked: true };
 }
 
+export async function pinQuestion(questionId: string) {
+  const question = await prisma.audienceQuestion.findUnique({
+    where: { id: questionId },
+    select: { id: true, isHidden: true, isAnswered: true }
+  });
+  if (!question) {
+    throw new RequestError("找不到可操作的观众问题。", 404);
+  }
+  if (question.isHidden) {
+    throw new RequestError("不能置顶已隐藏的问题。", 409);
+  }
+  if (question.isAnswered) {
+    throw new RequestError("不能置顶已回答的问题。", 409);
+  }
+
+  await prisma.audienceQuestion.update({
+    where: { id: questionId },
+    data: { isPinned: true }
+  });
+
+  return { pinned: true };
+}
+
+export async function unpinQuestion(questionId: string) {
+  const question = await prisma.audienceQuestion.findUnique({
+    where: { id: questionId },
+    select: { id: true }
+  });
+  if (!question) {
+    throw new RequestError("找不到可操作的观众问题。", 404);
+  }
+
+  await prisma.audienceQuestion.update({
+    where: { id: questionId },
+    data: { isPinned: false }
+  });
+
+  return { pinned: false };
+}
+
+export async function markQuestionAnswered(questionId: string) {
+  const question = await prisma.audienceQuestion.findUnique({
+    where: { id: questionId },
+    select: { id: true }
+  });
+  if (!question) {
+    throw new RequestError("找不到可操作的观众问题。", 404);
+  }
+
+  await prisma.audienceQuestion.update({
+    where: { id: questionId },
+    data: { isAnswered: true, isPinned: false }
+  });
+
+  return { answered: true };
+}
+
+export async function restoreQuestion(questionId: string) {
+  const question = await prisma.audienceQuestion.findUnique({
+    where: { id: questionId },
+    select: { id: true }
+  });
+  if (!question) {
+    throw new RequestError("找不到可操作的观众问题。", 404);
+  }
+
+  await prisma.audienceQuestion.update({
+    where: { id: questionId },
+    data: { isAnswered: false }
+  });
+
+  return { answered: false };
+}
+
+export async function hideQuestion(questionId: string) {
+  await prisma.audienceQuestion.update({
+    where: { id: questionId },
+    data: { isHidden: true, isPinned: false, isAnswered: false }
+  });
+
+  return { hidden: true };
+}
+
 export function audienceQuestionMutationNotAllowed() {
   return new RequestError("观众问题提交后不能由观众编辑或删除。", 405);
 }
@@ -329,7 +414,7 @@ async function findPublicActivityWithQuestionsByAccessCode(accessCode: string) {
       deletedAt: null
     },
     include: {
-      audienceQuestions: visibleQuestionInclude()
+      audienceQuestions: hostQuestionInclude()
     }
   });
 }
@@ -388,6 +473,23 @@ function visibleQuestionInclude() {
   };
 }
 
+function hostQuestionInclude() {
+  return {
+    include: {
+      audienceSession: {
+        select: {
+          displayName: true
+        }
+      },
+      _count: {
+        select: {
+          questionLikes: true
+        }
+      }
+    }
+  };
+}
+
 function toAudienceQuestion(question: AudienceQuestionRecord) {
   return {
     id: question.id,
@@ -397,16 +499,34 @@ function toAudienceQuestion(question: AudienceQuestionRecord) {
     text: question.text,
     createdAt: question.createdAt,
     isPinned: question.isPinned,
+    isAnswered: question.isAnswered,
+    isHidden: question.isHidden,
     likeCount: question._count?.questionLikes ?? 0
   };
 }
 
-function withVisibleQuestions<
+function withAllQuestions<
+  TActivity extends { audienceQuestions: AudienceQuestionRecord[] }
+>(activity: TActivity) {
+  const { audienceQuestions, ...restActivity } = activity;
+
+  const questions = audienceQuestions.map(toAudienceQuestion);
+  questions.sort(compareQuestionSort);
+
+  return {
+    ...restActivity,
+    questions
+  };
+}
+
+function withPublicQuestions<
   TActivity extends { audienceQuestions: AudienceQuestionRecord[] }
 >(activity: TActivity) {
   const { audienceQuestions, ...visibleActivity } = activity;
 
-  const questions = audienceQuestions.map(toAudienceQuestion);
+  const questions = audienceQuestions
+    .filter((q) => !q.isHidden && !q.isAnswered)
+    .map(toAudienceQuestion);
   questions.sort(compareQuestionSort);
 
   return {

@@ -17,6 +17,7 @@ import {
 } from "../src/app/api/audience/questions/[questionId]/route";
 import { GET as getDisplayActivity } from "../src/app/api/display/activities/[accessCode]/route";
 import { POST as likeAudienceQuestion } from "../src/app/api/audience/questions/[questionId]/like/route";
+import { POST as moderateQuestion } from "../src/app/api/host/questions/[questionId]/moderate/route";
 import { prisma } from "../src/server/prisma";
 
 async function json(response: Response) {
@@ -888,3 +889,293 @@ describe("issue #5 question likes and sorting", () => {
   });
 });
 
+
+
+describe("issue #6 moderation question management", () => {
+  async function moderate(questionId: string, action: string) {
+    const response = await moderateQuestion(
+      postRequest(`http://localhost/api/host/questions/${questionId}/moderate`, { action }),
+      { params: Promise.resolve({ questionId }) }
+    );
+    return response;
+  }
+
+  it("lets the host pin a question so it appears first in audience and display views", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+
+    // Submit two questions
+    const q1 = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        { audienceSessionId: joined.body.audienceSession?.id, text: "第一个问题" }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const q1Body = (await json(q1)) as { question: { id: string } };
+
+    const q2 = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        { audienceSessionId: joined.body.audienceSession?.id, text: "第二个问题" }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const q2Body = (await json(q2)) as { question: { id: string } };
+
+    // Pin the second question
+    const pinRes = await moderate(q2Body.question.id, "pin");
+    expect(pinRes.status).toBe(200);
+
+    // Audience view: pinned question should be first
+    const audienceRes = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceRes)) as {
+      activity: { questions: Array<{ id: string; isPinned: boolean }> };
+    };
+    expect(audienceBody.activity.questions).toHaveLength(2);
+    expect(audienceBody.activity.questions[0].id).toBe(q2Body.question.id);
+    expect(audienceBody.activity.questions[0].isPinned).toBe(true);
+    expect(audienceBody.activity.questions[1].id).toBe(q1Body.question.id);
+    expect(audienceBody.activity.questions[1].isPinned).toBe(false);
+
+    // Display view: pinned question should be first
+    const displayRes = await getDisplayActivity(
+      new Request(`http://localhost/api/display/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const displayBody = (await json(displayRes)) as {
+      activity: { questions: Array<{ id: string; isPinned: boolean }> };
+    };
+    expect(displayBody.activity.questions[0].id).toBe(q2Body.question.id);
+    expect(displayBody.activity.questions[0].isPinned).toBe(true);
+  });
+
+  it("rejects pinning a hidden question", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+
+    const q = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        { audienceSessionId: joined.body.audienceSession?.id, text: "被隐藏的问题" }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const qBody = (await json(q)) as { question: { id: string } };
+
+    await prisma.audienceQuestion.update({
+      where: { id: qBody.question.id },
+      data: { isHidden: true }
+    });
+
+    const pinRes = await moderate(qBody.question.id, "pin");
+    expect(pinRes.status).toBe(409);
+  });
+
+  it("lets the host unpin a pinned question and return to normal sorting", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+
+    const q = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        { audienceSessionId: joined.body.audienceSession?.id, text: "先置顶再取消" }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const qBody = (await json(q)) as { question: { id: string } };
+
+    await moderate(qBody.question.id, "pin");
+
+    // Unpin
+    const unpinRes = await moderate(qBody.question.id, "unpin");
+    expect(unpinRes.status).toBe(200);
+
+    // Verify it is no longer pinned in audience view
+    const audienceRes = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceRes)) as {
+      activity: { questions: Array<{ id: string; isPinned: boolean }> };
+    };
+    expect(audienceBody.activity.questions).toHaveLength(1);
+    expect(audienceBody.activity.questions[0].isPinned).toBe(false);
+  });
+
+  it("lets the host mark a question as answered, removing it from audience and display views", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+
+    const q = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        { audienceSessionId: joined.body.audienceSession?.id, text: "已回答的问题" }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const qBody = (await json(q)) as { question: { id: string } };
+
+    const answerRes = await moderate(qBody.question.id, "answer");
+    expect(answerRes.status).toBe(200);
+
+    // Audience view should not include answered question
+    const audienceRes = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceRes)) as {
+      activity: { questions: Array<{ id: string }> };
+    };
+    expect(audienceBody.activity.questions).toHaveLength(0);
+
+    // Display view should not include answered question
+    const displayRes = await getDisplayActivity(
+      new Request(`http://localhost/api/display/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const displayBody = (await json(displayRes)) as {
+      activity: { questions: Array<{ id: string }> };
+    };
+    expect(displayBody.activity.questions).toHaveLength(0);
+
+    // Host console should still show the answered question
+    const hostRes = await listHostActivities(
+      new Request("http://localhost/api/host/activities?ownerId=demo-host")
+    );
+    const hostBody = (await json(hostRes)) as {
+      activities: Array<{ questions: Array<{ id: string; isAnswered: boolean }> }>;
+    };
+    expect(hostBody.activities[0].questions).toHaveLength(1);
+    expect(hostBody.activities[0].questions[0].id).toBe(qBody.question.id);
+    expect(hostBody.activities[0].questions[0].isAnswered).toBe(true);
+  });
+
+  it("lets the host restore an answered question to the unanswered flow", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+
+    const q = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        { audienceSessionId: joined.body.audienceSession?.id, text: "恢复的问题" }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const qBody = (await json(q)) as { question: { id: string } };
+
+    await moderate(qBody.question.id, "answer");
+
+    // Restore
+    const restoreRes = await moderate(qBody.question.id, "restore");
+    expect(restoreRes.status).toBe(200);
+
+    // Should reappear in audience view
+    const audienceRes = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceRes)) as {
+      activity: { questions: Array<{ id: string; isAnswered: boolean }> };
+    };
+    expect(audienceBody.activity.questions).toHaveLength(1);
+    expect(audienceBody.activity.questions[0].id).toBe(qBody.question.id);
+    expect(audienceBody.activity.questions[0].isAnswered).toBe(false);
+  });
+
+  it("lets the host hide a question, removing it from all public views", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+
+    const q = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        { audienceSessionId: joined.body.audienceSession?.id, text: "需要隐藏的问题" }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const qBody = (await json(q)) as { question: { id: string } };
+
+    const hideRes = await moderate(qBody.question.id, "hide");
+    expect(hideRes.status).toBe(200);
+
+    // Audience view should not include hidden question
+    const audienceRes = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceRes)) as {
+      activity: { questions: Array<{ id: string }> };
+    };
+    expect(audienceBody.activity.questions).toHaveLength(0);
+
+    // Display view should not include hidden question
+    const displayRes = await getDisplayActivity(
+      new Request(`http://localhost/api/display/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const displayBody = (await json(displayRes)) as {
+      activity: { questions: Array<{ id: string }> };
+    };
+    expect(displayBody.activity.questions).toHaveLength(0);
+
+    // Host console should still show the hidden question
+    const hostRes = await listHostActivities(
+      new Request("http://localhost/api/host/activities?ownerId=demo-host")
+    );
+    const hostBody = (await json(hostRes)) as {
+      activities: Array<{ questions: Array<{ id: string; isHidden: boolean }> }>;
+    };
+    expect(hostBody.activities[0].questions).toHaveLength(1);
+    expect(hostBody.activities[0].questions[0].id).toBe(qBody.question.id);
+    expect(hostBody.activities[0].questions[0].isHidden).toBe(true);
+  });
+
+  it("rejects unknown moderation actions", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+
+    const q = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        { audienceSessionId: joined.body.audienceSession?.id, text: "任意问题" }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const qBody = (await json(q)) as { question: { id: string } };
+
+    const res = await moderate(qBody.question.id, "unknown");
+    expect(res.status).toBe(400);
+  });
+
+  it("hides moderation buttons for hidden questions and prevents further moderation", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+
+    const q = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        { audienceSessionId: joined.body.audienceSession?.id, text: "隐藏后不再操作" }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const qBody = (await json(q)) as { question: { id: string } };
+
+    await moderate(qBody.question.id, "hide");
+
+    // Pin should fail on hidden question
+    const pinRes = await moderate(qBody.question.id, "pin");
+    expect(pinRes.status).toBe(409);
+  });
+});

@@ -10,6 +10,8 @@ type AudienceQuestion = {
   displayName: string | null;
   createdAt: string;
   isPinned: boolean;
+  isAnswered: boolean;
+  isHidden: boolean;
   likeCount: number;
 };
 
@@ -35,6 +37,7 @@ export default function HostPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [activityError, setActivityError] = useState<string | null>(null);
   const [busyActivityId, setBusyActivityId] = useState<string | null>(null);
+  const [busyQuestionId, setBusyQuestionId] = useState<string | null>(null);
   const { data, mutate, isLoading } = useSWR<{ activities: Activity[] }>(
     "/api/host/activities?ownerId=demo-host",
     fetcher,
@@ -78,6 +81,24 @@ export default function HostPage() {
     await mutate();
   }
 
+  async function moderateQuestion(questionId: string, action: string) {
+    setActivityError(null);
+    setBusyQuestionId(questionId);
+    const response = await fetch(`/api/host/questions/${questionId}/moderate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action })
+    });
+
+    if (!response.ok) {
+      const body = (await response.json()) as { error?: string };
+      setActivityError(body.error ?? "控场操作失败。");
+    }
+
+    setBusyQuestionId(null);
+    await mutate();
+  }
+
   async function deleteActivity(activityId: string) {
     setActivityError(null);
     setBusyActivityId(activityId);
@@ -93,6 +114,7 @@ export default function HostPage() {
     setBusyActivityId(null);
     await mutate();
   }
+
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-8">
@@ -197,25 +219,98 @@ export default function HostPage() {
                     <ul className="mt-3 flex flex-col gap-2">
                       {activity.questions.map((question) => (
                         <li
-                          className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2"
+                          className="rounded-md border border-stone-200 px-3 py-2"
                           key={question.id}
+                          style={
+                            question.isHidden
+                              ? { background: "#fef2f2" }
+                              : question.isAnswered
+                                ? { background: "#f0fdf4" }
+                                : { background: "#fafaf9" }
+                          }
                         >
-                          {question.isPinned ? (
-                            <span className="mr-2 rounded-sm bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
-                              置顶
-                            </span>
-                          ) : null}
-                          <p className="inline text-sm text-stone-950">
-                            {question.text}
-                          </p>
-                          <p className="mt-1 text-xs text-stone-500">
-                            {question.displayName ?? "匿名观众"} ·{" "}
-                            {new Date(question.createdAt).toLocaleTimeString("zh-CN", {
-                              hour: "2-digit",
-                              minute: "2-digit"
-                            })} · ♥{" "}
-                            {question.likeCount}
-                          </p>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-1">
+                                {question.isPinned ? (
+                                  <span className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
+                                    置顶
+                                  </span>
+                                ) : null}
+                                {question.isAnswered ? (
+                                  <span className="rounded-sm bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800">
+                                    已回答
+                                  </span>
+                                ) : null}
+                                {question.isHidden ? (
+                                  <span className="rounded-sm bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-800">
+                                    已隐藏
+                                  </span>
+                                ) : null}
+                                <span className="text-sm text-stone-950">
+                                  {question.text}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-stone-500">
+                                {question.displayName ?? "匿名观众"} ·{" "}
+                                {new Date(question.createdAt).toLocaleTimeString("zh-CN", {
+                                  hour: "2-digit",
+                                  minute: "2-digit"
+                                })} · ♥{" "}
+                                {question.likeCount}
+                              </p>
+                            </div>
+                            <div className="flex shrink-0 flex-wrap gap-1">
+                              {question.isHidden ? null : question.isPinned ? (
+                                <button
+                                  className="rounded-sm border border-stone-300 px-1.5 py-0.5 text-xs text-stone-600 disabled:opacity-40"
+                                  disabled={busyQuestionId === question.id}
+                                  onClick={() => void moderateQuestion(question.id, "unpin")}
+                                  type="button"
+                                >
+                                  取消置顶
+                                </button>
+                              ) : (
+                                <button
+                                  className="rounded-sm border border-stone-300 px-1.5 py-0.5 text-xs text-stone-600 disabled:opacity-40"
+                                  disabled={busyQuestionId === question.id || question.isAnswered}
+                                  onClick={() => void moderateQuestion(question.id, "pin")}
+                                  type="button"
+                                >
+                                  置顶
+                                </button>
+                              )}
+                              {question.isHidden ? null : question.isAnswered ? (
+                                <button
+                                  className="rounded-sm border border-stone-300 px-1.5 py-0.5 text-xs text-stone-600 disabled:opacity-40"
+                                  disabled={busyQuestionId === question.id}
+                                  onClick={() => void moderateQuestion(question.id, "restore")}
+                                  type="button"
+                                >
+                                  恢复未答
+                                </button>
+                              ) : (
+                                <button
+                                  className="rounded-sm border border-stone-300 px-1.5 py-0.5 text-xs text-stone-600 disabled:opacity-40"
+                                  disabled={busyQuestionId === question.id}
+                                  onClick={() => void moderateQuestion(question.id, "answer")}
+                                  type="button"
+                                >
+                                  标记回答
+                                </button>
+                              )}
+                              {question.isHidden ? null : (
+                                <button
+                                  className="rounded-sm border border-red-200 px-1.5 py-0.5 text-xs text-red-600 disabled:opacity-40"
+                                  disabled={busyQuestionId === question.id}
+                                  onClick={() => void moderateQuestion(question.id, "hide")}
+                                  type="button"
+                                >
+                                  隐藏
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </li>
                       ))}
                     </ul>
