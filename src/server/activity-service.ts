@@ -9,6 +9,18 @@ const DEFAULT_OWNER_ID = "demo-host";
 const DEFAULT_OWNER_NAME = "示例主持账号";
 const DEFAULT_QUESTION_CHAR_LIMIT = 240;
 
+type AudienceQuestionRecord = {
+  id: string;
+  activityId: string;
+  audienceSessionId: string;
+  text: string;
+  createdAt: Date;
+  isPinned: boolean;
+  audienceSession: {
+    displayName: string | null;
+  };
+};
+
 export type RouteActivityContext = {
   params: Promise<{ accessCode: string }>;
 };
@@ -61,15 +73,20 @@ export async function createDraftActivity(input: {
 }
 
 export async function listOwnedActivities(ownerId?: string) {
-  return prisma.activity.findMany({
+  const activities = await prisma.activity.findMany({
     where: {
       ownerId: ownerId?.trim() || DEFAULT_OWNER_ID,
       deletedAt: null
+    },
+    include: {
+      audienceQuestions: visibleQuestionInclude()
     },
     orderBy: {
       createdAt: "desc"
     }
   });
+
+  return activities.map(withVisibleQuestions);
 }
 
 export async function startActivity(activityId: string) {
@@ -148,13 +165,13 @@ export async function createAudienceSession(input: {
 }
 
 export async function getAudienceActivity(accessCode: string) {
-  const activity = await findPublicActivityByAccessCode(accessCode);
+  const activity = await findPublicActivityWithQuestionsByAccessCode(accessCode);
   if (!activity) {
     throw new RequestError("找不到可访问的活动。", 404);
   }
 
   return {
-    ...activity,
+    ...withVisibleQuestions(activity),
     acceptsInteraction: activity.state === "LIVE",
     audienceNotice:
       activity.state === "DRAFT"
@@ -166,7 +183,7 @@ export async function getAudienceActivity(accessCode: string) {
 }
 
 export async function getDisplayActivity(accessCode: string, origin: string) {
-  const activity = await findPublicActivityByAccessCode(accessCode);
+  const activity = await findPublicActivityWithQuestionsByAccessCode(accessCode);
   if (!activity) {
     throw new RequestError("找不到可展示的活动。", 404);
   }
@@ -179,10 +196,64 @@ export async function getDisplayActivity(accessCode: string, origin: string) {
   });
 
   return {
-    ...activity,
+    ...withVisibleQuestions(activity),
     joinUrl,
     qrCodeDataUrl
   };
+}
+
+export async function submitAudienceQuestion(input: {
+  accessCode: string;
+  audienceSessionId: string;
+  text: string;
+}) {
+  const activity = await findPublicActivityByAccessCode(input.accessCode);
+  if (!activity) {
+    throw new RequestError("找不到可提问的活动。", 404);
+  }
+  if (activity.state !== "LIVE") {
+    throw new RequestError("只有进行中活动可以提交观众问题。", 409);
+  }
+
+  const text = input.text.trim();
+  if (!text) {
+    throw new RequestError("观众问题不能为空。", 400);
+  }
+  if (text.length > activity.questionCharLimit) {
+    throw new RequestError("观众问题超过活动的问题字数限制。", 400);
+  }
+
+  const audienceSession = await prisma.audienceSession.findFirst({
+    where: {
+      id: input.audienceSessionId,
+      activityId: activity.id
+    },
+    select: { id: true }
+  });
+  if (!audienceSession) {
+    throw new RequestError("找不到此活动的观众会话。", 404);
+  }
+
+  const question = await prisma.audienceQuestion.create({
+    data: {
+      activityId: activity.id,
+      audienceSessionId: audienceSession.id,
+      text
+    },
+    include: {
+      audienceSession: {
+        select: {
+          displayName: true
+        }
+      }
+    }
+  });
+
+  return toAudienceQuestion(question);
+}
+
+export function audienceQuestionMutationNotAllowed() {
+  return new RequestError("观众问题提交后不能由观众编辑或删除。", 405);
 }
 
 async function findPublicActivityByAccessCode(accessCode: string) {
@@ -190,6 +261,18 @@ async function findPublicActivityByAccessCode(accessCode: string) {
     where: {
       accessCode: accessCode.trim().toUpperCase(),
       deletedAt: null
+    }
+  });
+}
+
+async function findPublicActivityWithQuestionsByAccessCode(accessCode: string) {
+  return prisma.activity.findFirst({
+    where: {
+      accessCode: accessCode.trim().toUpperCase(),
+      deletedAt: null
+    },
+    include: {
+      audienceQuestions: visibleQuestionInclude()
     }
   });
 }
@@ -224,6 +307,46 @@ function generateAccessCode() {
     accessCode += ACCESS_CODE_ALPHABET[randomInt(ACCESS_CODE_ALPHABET.length)];
   }
   return accessCode;
+}
+
+function visibleQuestionInclude() {
+  return {
+    where: {
+      isHidden: false,
+      isAnswered: false
+    },
+    include: {
+      audienceSession: {
+        select: {
+          displayName: true
+        }
+      }
+    },
+    orderBy: [{ isPinned: "desc" as const }, { createdAt: "asc" as const }]
+  };
+}
+
+function toAudienceQuestion(question: AudienceQuestionRecord) {
+  return {
+    id: question.id,
+    activityId: question.activityId,
+    audienceSessionId: question.audienceSessionId,
+    displayName: question.audienceSession.displayName,
+    text: question.text,
+    createdAt: question.createdAt,
+    isPinned: question.isPinned
+  };
+}
+
+function withVisibleQuestions<
+  TActivity extends { audienceQuestions: AudienceQuestionRecord[] }
+>(activity: TActivity) {
+  const { audienceQuestions, ...visibleActivity } = activity;
+
+  return {
+    ...visibleActivity,
+    questions: audienceQuestions.map(toAudienceQuestion)
+  };
 }
 
 export class RequestError extends Error {

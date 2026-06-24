@@ -4,6 +4,14 @@ import Link from "next/link";
 import { FormEvent, useState } from "react";
 import useSWR from "swr";
 
+type AudienceQuestion = {
+  id: string;
+  text: string;
+  displayName: string | null;
+  createdAt: string;
+  isPinned: boolean;
+};
+
 type Activity = {
   id: string;
   title: string;
@@ -11,6 +19,7 @@ type Activity = {
   state: "DRAFT" | "LIVE" | "ENDED";
   createdAt: string;
   questionCharLimit: number;
+  questions: AudienceQuestion[];
 };
 
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
@@ -181,6 +190,30 @@ export default function HostPage() {
                     </button>
                   </div>
                 </div>
+                <section className="mt-4 border-t border-stone-200 pt-4">
+                  <h4 className="text-sm font-semibold text-stone-900">观众问题</h4>
+                  {activity.questions.length > 0 ? (
+                    <ul className="mt-3 flex flex-col gap-2">
+                      {activity.questions.map((question) => (
+                        <li
+                          className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2"
+                          key={question.id}
+                        >
+                          <p className="text-sm text-stone-950">{question.text}</p>
+                          <p className="mt-1 text-xs text-stone-500">
+                            {question.displayName ?? "匿名观众"} ·{" "}
+                            {new Date(question.createdAt).toLocaleTimeString("zh-CN", {
+                              hour: "2-digit",
+                              minute: "2-digit"
+                            })}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-sm text-stone-500">暂无观众问题。</p>
+                  )}
+                </section>
               </article>
             ))}
             {!isLoading && (data?.activities ?? []).length === 0 ? (

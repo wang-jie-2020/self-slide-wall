@@ -3,12 +3,21 @@
 import { useParams } from "next/navigation";
 import useSWR from "swr";
 
+type AudienceQuestion = {
+  id: string;
+  text: string;
+  displayName: string | null;
+  createdAt: string;
+  isPinned: boolean;
+};
+
 type DisplayActivity = {
   id: string;
   title: string;
   accessCode: string;
   joinUrl: string;
   qrCodeDataUrl: string;
+  questions: AudienceQuestion[];
 };
 
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
@@ -23,24 +32,56 @@ export default function DisplayPage() {
   );
 
   return (
-    <main className="flex min-h-screen w-full items-center justify-center bg-stone-950 px-6 py-8 text-white">
+    <main className="flex min-h-screen w-full bg-stone-950 px-6 py-8 text-white">
       {isLoading ? <p className="text-stone-300">正在加载展示视图...</p> : null}
       {data?.activity ? (
-        <section className="grid w-full max-w-6xl items-center gap-10 md:grid-cols-[1fr_340px]">
-          <div className="flex flex-col gap-6">
-            <p className="text-sm font-medium text-emerald-300">现场加入入口</p>
-            <h1 className="text-4xl font-semibold">{data.activity.title}</h1>
-            <div className="flex flex-col gap-2">
-              <p className="text-lg text-stone-300">访问码</p>
-              <p className="font-mono text-6xl font-bold tracking-widest text-emerald-200">
-                {data.activity.accessCode}
+        <section className="mx-auto grid w-full max-w-7xl gap-8 lg:grid-cols-[360px_1fr]">
+          <aside className="flex h-fit flex-col gap-6 rounded-md border border-stone-700 bg-stone-900 p-5">
+            <div className="flex flex-col gap-4">
+              <p className="text-sm font-medium text-emerald-300">现场加入入口</p>
+              <h1 className="text-3xl font-semibold">{data.activity.title}</h1>
+              <div className="flex flex-col gap-2">
+                <p className="text-lg text-stone-300">访问码</p>
+                <p className="font-mono text-6xl font-bold tracking-widest text-emerald-200">
+                  {data.activity.accessCode}
+                </p>
+              </div>
+              <p className="break-all text-base text-stone-300">
+                {data.activity.joinUrl}
               </p>
             </div>
-            <p className="break-all text-lg text-stone-300">{data.activity.joinUrl}</p>
-          </div>
-          <div className="flex justify-center rounded-md bg-white p-5">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img alt="加入活动二维码" height={280} src={data.activity.qrCodeDataUrl} width={280} />
+            <div className="flex justify-center rounded-md bg-white p-5">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                alt="加入活动二维码"
+                height={280}
+                src={data.activity.qrCodeDataUrl}
+                width={280}
+              />
+            </div>
+          </aside>
+
+          <div className="flex flex-col gap-4">
+            <h2 className="text-3xl font-semibold">观众问题</h2>
+            {data.activity.questions.length > 0 ? (
+              <ul className="grid gap-4">
+                {data.activity.questions.map((question) => (
+                  <li
+                    className="rounded-md border border-stone-700 bg-stone-900 p-5"
+                    key={question.id}
+                  >
+                    <p className="text-2xl leading-relaxed">{question.text}</p>
+                    <p className="mt-3 text-base text-stone-400">
+                      {question.displayName ?? "匿名观众"}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="rounded-md border border-stone-700 bg-stone-900 p-5 text-lg text-stone-300">
+                暂无观众问题。
+              </p>
+            )}
           </div>
         </section>
       ) : null}

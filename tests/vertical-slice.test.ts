@@ -10,6 +10,11 @@ import {
 } from "../src/app/api/host/activities/[activityId]/route";
 import { POST as joinAudienceSession } from "../src/app/api/audience/sessions/route";
 import { GET as getAudienceActivity } from "../src/app/api/audience/activities/[accessCode]/route";
+import { POST as submitAudienceQuestion } from "../src/app/api/audience/activities/[accessCode]/questions/route";
+import {
+  DELETE as deleteAudienceQuestion,
+  PATCH as updateAudienceQuestion
+} from "../src/app/api/audience/questions/[questionId]/route";
 import { GET as getDisplayActivity } from "../src/app/api/display/activities/[accessCode]/route";
 import { prisma } from "../src/server/prisma";
 
@@ -37,6 +42,14 @@ function routeActivityId(activityId: string) {
   return { params: Promise.resolve({ activityId }) };
 }
 
+function routeAccessCode(accessCode: string) {
+  return { params: Promise.resolve({ accessCode }) };
+}
+
+function routeQuestionId(questionId: string) {
+  return { params: Promise.resolve({ questionId }) };
+}
+
 async function createDraftActivity(title = "TypeScript 现场问答") {
   const response = await createHostActivity(
     postRequest("http://localhost/api/host/activities", {
@@ -61,6 +74,26 @@ async function createDraftActivity(title = "TypeScript 现场问答") {
   return body.activity;
 }
 
+async function joinActivity(accessCode: string, displayName?: string) {
+  const response = await joinAudienceSession(
+    postRequest("http://localhost/api/audience/sessions", {
+      accessCode,
+      displayName
+    })
+  );
+  const body = (await json(response)) as {
+    audienceSession?: {
+      id: string;
+      activityId: string;
+      displayName: string | null;
+      displayNameVerified: boolean;
+    };
+    error?: string;
+  };
+
+  return { response, body };
+}
+
 async function moveActivity(activityId: string, action: "start" | "end") {
   const response = await updateHostActivity(
     patchRequest(`http://localhost/api/host/activities/${activityId}`, { action }),
@@ -79,6 +112,7 @@ async function moveActivity(activityId: string, action: "start" | "end") {
 }
 
 beforeEach(async () => {
+  await prisma.audienceQuestion.deleteMany();
   await prisma.audienceSession.deleteMany();
   await prisma.activity.deleteMany();
   await prisma.hostAccount.deleteMany();
@@ -292,5 +326,211 @@ describe("issue #3 activity lifecycle", () => {
       { params: Promise.resolve({ accessCode: activity.accessCode }) }
     );
     expect(displayResponse.status).toBe(404);
+  });
+});
+
+describe("issue #4 audience question submission", () => {
+  it("lets an audience session submit a live question that appears in audience, display, and host views", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode, "小王");
+    expect(joined.response.status).toBe(201);
+    const audienceSession = joined.body.audienceSession;
+    expect(audienceSession).toBeDefined();
+
+    const submitResponse = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: audienceSession?.id,
+          text: "能不能多讲一下 TypeScript 的类型收窄？"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    expect(submitResponse.status).toBe(201);
+    const submitBody = (await json(submitResponse)) as {
+      question: {
+        id: string;
+        activityId: string;
+        audienceSessionId: string;
+        displayName: string | null;
+        text: string;
+        createdAt: string;
+      };
+    };
+
+    expect(submitBody.question).toMatchObject({
+      activityId: activity.id,
+      audienceSessionId: audienceSession?.id,
+      displayName: "小王",
+      text: "能不能多讲一下 TypeScript 的类型收窄？"
+    });
+    expect(new Date(submitBody.question.createdAt).toString()).not.toBe(
+      "Invalid Date"
+    );
+
+    const audienceResponse = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceResponse)) as {
+      activity: { questions: Array<typeof submitBody.question> };
+    };
+    expect(audienceBody.activity.questions).toMatchObject([
+      {
+        id: submitBody.question.id,
+        displayName: "小王",
+        text: "能不能多讲一下 TypeScript 的类型收窄？"
+      }
+    ]);
+
+    const displayResponse = await getDisplayActivity(
+      new Request(`http://localhost/api/display/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const displayBody = (await json(displayResponse)) as {
+      activity: { questions: Array<typeof submitBody.question> };
+    };
+    expect(displayBody.activity.questions).toMatchObject([
+      {
+        id: submitBody.question.id,
+        displayName: "小王",
+        text: "能不能多讲一下 TypeScript 的类型收窄？"
+      }
+    ]);
+
+    const hostResponse = await listHostActivities(
+      new Request("http://localhost/api/host/activities?ownerId=demo-host")
+    );
+    const hostBody = (await json(hostResponse)) as {
+      activities: Array<{ id: string; questions: Array<typeof submitBody.question> }>;
+    };
+    expect(hostBody.activities[0]).toMatchObject({
+      id: activity.id,
+      questions: [
+        {
+          id: submitBody.question.id,
+          audienceSessionId: audienceSession?.id,
+          displayName: "小王",
+          text: "能不能多讲一下 TypeScript 的类型收窄？"
+        }
+      ]
+    });
+  });
+
+  it("rejects audience question submission unless the activity is live", async () => {
+    const activity = await createDraftActivity();
+    const joined = await joinActivity(activity.accessCode);
+
+    const draftSubmit = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: joined.body.audienceSession?.id,
+          text: "现在可以提问了吗？"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    expect(draftSubmit.status).toBe(409);
+
+    await moveActivity(activity.id, "start");
+    await moveActivity(activity.id, "end");
+
+    const endedSubmit = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: joined.body.audienceSession?.id,
+          text: "结束后还能提问吗？"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    expect(endedSubmit.status).toBe(409);
+  });
+
+  it("enforces the activity question character limit", async () => {
+    const activity = await createDraftActivity();
+    await prisma.activity.update({
+      where: { id: activity.id },
+      data: { questionCharLimit: 8 }
+    });
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+
+    const tooLong = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: joined.body.audienceSession?.id,
+          text: "这个问题超过八个字"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    expect(tooLong.status).toBe(400);
+
+    const withinLimit = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: joined.body.audienceSession?.id,
+          text: "刚好八字"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    expect(withinLimit.status).toBe(201);
+  });
+
+  it("does not expose audience-side edit or delete for submitted questions", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+    const joined = await joinActivity(activity.accessCode);
+    const submitResponse = await submitAudienceQuestion(
+      postRequest(
+        `http://localhost/api/audience/activities/${activity.accessCode}/questions`,
+        {
+          audienceSessionId: joined.body.audienceSession?.id,
+          text: "提交后不能修改。"
+        }
+      ),
+      routeAccessCode(activity.accessCode)
+    );
+    const submitBody = (await json(submitResponse)) as {
+      question: { id: string; text: string };
+    };
+
+    const editResponse = await updateAudienceQuestion(
+      patchRequest(`http://localhost/api/audience/questions/${submitBody.question.id}`, {
+        text: "我想修改"
+      }),
+      routeQuestionId(submitBody.question.id)
+    );
+    expect(editResponse.status).toBe(405);
+
+    const deleteResponse = await deleteAudienceQuestion(
+      new Request(`http://localhost/api/audience/questions/${submitBody.question.id}`, {
+        method: "DELETE"
+      }),
+      routeQuestionId(submitBody.question.id)
+    );
+    expect(deleteResponse.status).toBe(405);
+
+    const audienceResponse = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      routeAccessCode(activity.accessCode)
+    );
+    const audienceBody = (await json(audienceResponse)) as {
+      activity: { questions: Array<{ id: string; text: string }> };
+    };
+    expect(audienceBody.activity.questions).toMatchObject([
+      {
+        id: submitBody.question.id,
+        text: "提交后不能修改。"
+      }
+    ]);
   });
 });

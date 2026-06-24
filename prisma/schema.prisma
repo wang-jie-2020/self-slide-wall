@@ -24,14 +24,31 @@ model Activity {
   ownerId           String
   owner             HostAccount       @relation(fields: [ownerId], references: [id])
   audienceSessions  AudienceSession[]
+  audienceQuestions AudienceQuestion[]
 }
 
 model AudienceSession {
-  id          String   @id @default(cuid())
-  activityId  String
-  displayName String?
-  createdAt   DateTime @default(now())
-  activity    Activity @relation(fields: [activityId], references: [id])
+  id                String             @id @default(cuid())
+  activityId        String
+  displayName       String?
+  createdAt         DateTime           @default(now())
+  activity          Activity           @relation(fields: [activityId], references: [id])
+  audienceQuestions AudienceQuestion[]
+}
+
+model AudienceQuestion {
+  id                String          @id @default(cuid())
+  activityId        String
+  audienceSessionId String
+  text              String
+  createdAt         DateTime        @default(now())
+  isPinned          Boolean         @default(false)
+  isAnswered        Boolean         @default(false)
+  isHidden          Boolean         @default(false)
+  activity          Activity        @relation(fields: [activityId], references: [id])
+  audienceSession   AudienceSession @relation(fields: [audienceSessionId], references: [id])
+
+  @@index([activityId, isHidden, isAnswered, createdAt])
 }
 
 enum ActivityState {
