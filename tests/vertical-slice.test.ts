@@ -4,6 +4,10 @@ import {
   GET as listHostActivities,
   POST as createHostActivity
 } from "../src/app/api/host/activities/route";
+import {
+  DELETE as deleteHostActivity,
+  PATCH as updateHostActivity
+} from "../src/app/api/host/activities/[activityId]/route";
 import { POST as joinAudienceSession } from "../src/app/api/audience/sessions/route";
 import { GET as getAudienceActivity } from "../src/app/api/audience/activities/[accessCode]/route";
 import { GET as getDisplayActivity } from "../src/app/api/display/activities/[accessCode]/route";
@@ -19,6 +23,18 @@ function postRequest(url: string, body: unknown) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   });
+}
+
+function patchRequest(url: string, body: unknown) {
+  return new Request(url, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+}
+
+function routeActivityId(activityId: string) {
+  return { params: Promise.resolve({ activityId }) };
 }
 
 async function createDraftActivity(title = "TypeScript 现场问答") {
@@ -43,6 +59,23 @@ async function createDraftActivity(title = "TypeScript 现场问答") {
   };
 
   return body.activity;
+}
+
+async function moveActivity(activityId: string, action: "start" | "end") {
+  const response = await updateHostActivity(
+    patchRequest(`http://localhost/api/host/activities/${activityId}`, { action }),
+    routeActivityId(activityId)
+  );
+  const body = (await json(response)) as {
+    activity?: {
+      id: string;
+      state: string;
+      accessCode: string;
+    };
+    error?: string;
+  };
+
+  return { response, body };
 }
 
 beforeEach(async () => {
@@ -158,5 +191,106 @@ describe("issue #2 vertical slice", () => {
       `http://localhost/join/${activity.accessCode}`
     );
     expect(displayBody.activity.qrCodeDataUrl).toMatch(/^data:image\/png;base64,/);
+  });
+});
+
+describe("issue #3 activity lifecycle", () => {
+  it("lets the host start a draft activity and see it as live in the host console list", async () => {
+    const activity = await createDraftActivity();
+
+    const { response, body } = await moveActivity(activity.id, "start");
+
+    expect(response.status).toBe(200);
+    expect(body.activity).toMatchObject({
+      id: activity.id,
+      state: "LIVE"
+    });
+
+    const listResponse = await listHostActivities(
+      new Request("http://localhost/api/host/activities?ownerId=demo-host")
+    );
+    const listBody = (await json(listResponse)) as {
+      activities: Array<{ id: string; state: string }>;
+    };
+
+    expect(listBody.activities).toHaveLength(1);
+    expect(listBody.activities[0]).toMatchObject({
+      id: activity.id,
+      state: "LIVE"
+    });
+  });
+
+  it("lets the host end a live activity, keeps it read-only, and prevents reopening", async () => {
+    const activity = await createDraftActivity();
+    await moveActivity(activity.id, "start");
+
+    const ended = await moveActivity(activity.id, "end");
+    expect(ended.response.status).toBe(200);
+    expect(ended.body.activity).toMatchObject({
+      id: activity.id,
+      state: "ENDED"
+    });
+
+    const reopen = await moveActivity(activity.id, "start");
+    expect(reopen.response.status).toBe(409);
+
+    const audienceResponse = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      { params: Promise.resolve({ accessCode: activity.accessCode }) }
+    );
+    expect(audienceResponse.status).toBe(200);
+    const audienceBody = (await json(audienceResponse)) as {
+      activity: {
+        id: string;
+        state: string;
+        acceptsInteraction: boolean;
+        audienceNotice: string;
+      };
+    };
+
+    expect(audienceBody.activity).toMatchObject({
+      id: activity.id,
+      state: "ENDED",
+      acceptsInteraction: false,
+      audienceNotice: "活动已结束，仅可查看。"
+    });
+
+    const displayResponse = await getDisplayActivity(
+      new Request(`http://localhost/api/display/activities/${activity.accessCode}`),
+      { params: Promise.resolve({ accessCode: activity.accessCode }) }
+    );
+    expect(displayResponse.status).toBe(200);
+  });
+
+  it("soft deletes an activity, hides it from the host list, and blocks public access", async () => {
+    const activity = await createDraftActivity();
+
+    const deleteResponse = await deleteHostActivity(
+      new Request(`http://localhost/api/host/activities/${activity.id}`, {
+        method: "DELETE"
+      }),
+      routeActivityId(activity.id)
+    );
+    expect(deleteResponse.status).toBe(200);
+
+    const listResponse = await listHostActivities(
+      new Request("http://localhost/api/host/activities?ownerId=demo-host")
+    );
+    const listBody = (await json(listResponse)) as {
+      activities: Array<{ id: string }>;
+    };
+    expect(listBody.activities).toHaveLength(0);
+
+    const audienceResponse = await getAudienceActivity(
+      new Request(`http://localhost/api/audience/activities/${activity.accessCode}`),
+      { params: Promise.resolve({ accessCode: activity.accessCode }) }
+    );
+    expect(audienceResponse.status).toBe(404);
+
+    const displayResponse = await getDisplayActivity(
+      new Request(`http://localhost/api/display/activities/${activity.accessCode}`),
+      { params: Promise.resolve({ accessCode: activity.accessCode }) }
+    );
+    expect(displayResponse.status).toBe(404);
   });
 });

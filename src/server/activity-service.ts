@@ -13,11 +13,22 @@ export type RouteActivityContext = {
   params: Promise<{ accessCode: string }>;
 };
 
+export type RouteHostActivityContext = {
+  params: Promise<{ activityId: string }>;
+};
+
 export async function resolveAccessCode(
   context: RouteActivityContext
 ): Promise<string> {
   const params = await context.params;
   return params.accessCode;
+}
+
+export async function resolveActivityId(
+  context: RouteHostActivityContext
+): Promise<string> {
+  const params = await context.params;
+  return params.activityId;
 }
 
 export async function createDraftActivity(input: {
@@ -52,11 +63,64 @@ export async function createDraftActivity(input: {
 export async function listOwnedActivities(ownerId?: string) {
   return prisma.activity.findMany({
     where: {
-      ownerId: ownerId?.trim() || DEFAULT_OWNER_ID
+      ownerId: ownerId?.trim() || DEFAULT_OWNER_ID,
+      deletedAt: null
     },
     orderBy: {
       createdAt: "desc"
     }
+  });
+}
+
+export async function startActivity(activityId: string) {
+  const activity = await findAccessibleActivityById(activityId);
+  if (!activity) {
+    throw new RequestError("找不到可管理的活动。", 404);
+  }
+  if (activity.state !== "DRAFT") {
+    throw new RequestError(
+      activity.state === "ENDED"
+        ? "已结束活动不能重新开启。"
+        : "只有草稿活动可以开始。",
+      409
+    );
+  }
+
+  return prisma.activity.update({
+    where: { id: activity.id },
+    data: { state: "LIVE" }
+  });
+}
+
+export async function endActivity(activityId: string) {
+  const activity = await findAccessibleActivityById(activityId);
+  if (!activity) {
+    throw new RequestError("找不到可管理的活动。", 404);
+  }
+  if (activity.state !== "LIVE") {
+    throw new RequestError("只有进行中活动可以结束。", 409);
+  }
+
+  return prisma.activity.update({
+    where: { id: activity.id },
+    data: { state: "ENDED" }
+  });
+}
+
+export async function softDeleteActivity(activityId: string) {
+  const activity = await prisma.activity.findUnique({
+    where: { id: activityId }
+  });
+  if (!activity) {
+    throw new RequestError("找不到可删除的活动。", 404);
+  }
+  if (activity.deletedAt) {
+    return activity;
+  }
+
+  return prisma.activity.update({
+    where: { id: activity.id },
+    data: { deletedAt: new Date() }
   });
 }
 
@@ -122,9 +186,19 @@ export async function getDisplayActivity(accessCode: string, origin: string) {
 }
 
 async function findPublicActivityByAccessCode(accessCode: string) {
-  return prisma.activity.findUnique({
+  return prisma.activity.findFirst({
     where: {
-      accessCode: accessCode.trim().toUpperCase()
+      accessCode: accessCode.trim().toUpperCase(),
+      deletedAt: null
+    }
+  });
+}
+
+async function findAccessibleActivityById(activityId: string) {
+  return prisma.activity.findFirst({
+    where: {
+      id: activityId,
+      deletedAt: null
     }
   });
 }

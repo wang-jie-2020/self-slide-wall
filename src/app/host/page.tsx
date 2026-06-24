@@ -14,10 +14,17 @@ type Activity = {
 };
 
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
+const stateLabels: Record<Activity["state"], string> = {
+  DRAFT: "草稿活动",
+  LIVE: "进行中活动",
+  ENDED: "已结束活动"
+};
 
 export default function HostPage() {
   const [title, setTitle] = useState("TypeScript 现场问答");
-  const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [busyActivityId, setBusyActivityId] = useState<string | null>(null);
   const { data, mutate, isLoading } = useSWR<{ activities: Activity[] }>(
     "/api/host/activities?ownerId=demo-host",
     fetcher,
@@ -26,7 +33,7 @@ export default function HostPage() {
 
   async function createActivity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(null);
+    setFormError(null);
     const response = await fetch("/api/host/activities", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -35,11 +42,45 @@ export default function HostPage() {
 
     if (!response.ok) {
       const body = (await response.json()) as { error?: string };
-      setError(body.error ?? "创建失败。");
+      setFormError(body.error ?? "创建失败。");
       return;
     }
 
     setTitle("");
+    await mutate();
+  }
+
+  async function updateActivity(activityId: string, action: "start" | "end") {
+    setActivityError(null);
+    setBusyActivityId(activityId);
+    const response = await fetch(`/api/host/activities/${activityId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action })
+    });
+
+    if (!response.ok) {
+      const body = (await response.json()) as { error?: string };
+      setActivityError(body.error ?? "活动状态更新失败。");
+    }
+
+    setBusyActivityId(null);
+    await mutate();
+  }
+
+  async function deleteActivity(activityId: string) {
+    setActivityError(null);
+    setBusyActivityId(activityId);
+    const response = await fetch(`/api/host/activities/${activityId}`, {
+      method: "DELETE"
+    });
+
+    if (!response.ok) {
+      const body = (await response.json()) as { error?: string };
+      setActivityError(body.error ?? "删除失败。");
+    }
+
+    setBusyActivityId(null);
     await mutate();
   }
 
@@ -65,7 +106,7 @@ export default function HostPage() {
               value={title}
             />
           </label>
-          {error ? <p className="text-sm text-red-700">{error}</p> : null}
+          {formError ? <p className="text-sm text-red-700">{formError}</p> : null}
           <button
             className="rounded-md bg-stone-950 px-4 py-2 text-sm font-medium text-white disabled:bg-stone-400"
             disabled={!title.trim()}
@@ -77,6 +118,9 @@ export default function HostPage() {
 
         <div className="flex flex-col gap-3">
           <h2 className="text-lg font-semibold text-stone-950">我的活动</h2>
+          {activityError ? (
+            <p className="text-sm text-red-700">{activityError}</p>
+          ) : null}
           {isLoading ? <p className="text-sm text-stone-600">正在加载活动...</p> : null}
           <div className="grid gap-3">
             {(data?.activities ?? []).map((activity) => (
@@ -90,11 +134,31 @@ export default function HostPage() {
                       {activity.title}
                     </h3>
                     <p className="text-sm text-stone-600">
-                      草稿活动 · 访问码 {activity.accessCode} · 问题字数限制{" "}
+                      {stateLabels[activity.state]} · 访问码 {activity.accessCode} · 问题字数限制{" "}
                       {activity.questionCharLimit}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    {activity.state === "DRAFT" ? (
+                      <button
+                        className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-medium text-white disabled:bg-stone-400"
+                        disabled={busyActivityId === activity.id}
+                        onClick={() => void updateActivity(activity.id, "start")}
+                        type="button"
+                      >
+                        开始
+                      </button>
+                    ) : null}
+                    {activity.state === "LIVE" ? (
+                      <button
+                        className="rounded-md bg-amber-700 px-3 py-2 text-sm font-medium text-white disabled:bg-stone-400"
+                        disabled={busyActivityId === activity.id}
+                        onClick={() => void updateActivity(activity.id, "end")}
+                        type="button"
+                      >
+                        结束
+                      </button>
+                    ) : null}
                     <Link
                       className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium"
                       href={`/join/${activity.accessCode}`}
@@ -107,6 +171,14 @@ export default function HostPage() {
                     >
                       展示视图
                     </Link>
+                    <button
+                      className="rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 disabled:text-stone-400"
+                      disabled={busyActivityId === activity.id}
+                      onClick={() => void deleteActivity(activity.id)}
+                      type="button"
+                    >
+                      删除
+                    </button>
                   </div>
                 </div>
               </article>

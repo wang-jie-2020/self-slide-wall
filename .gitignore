@@ -9,6 +9,7 @@ Thumbs.db
 /.next
 /node_modules
 /coverage
+/.tmp-smoke
 /tsconfig.tsbuildinfo
 /prisma/dev.db
 /prisma/dev.db-journal
