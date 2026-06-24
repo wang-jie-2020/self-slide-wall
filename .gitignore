@@ -1,9 +1,9 @@
 .DS_Store
 Thumbs.db
-.codex/
+.codex
+.claude
+.agents
 /skills-lock.json
-/.claude
-/.agents
 /out
 /output
 /.next
