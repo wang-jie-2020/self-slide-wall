@@ -25,6 +25,24 @@ type Activity = {
   questions: AudienceQuestion[];
 };
 
+type PollOption = {
+  id: string;
+  text: string;
+  count: number;
+  percentage: number;
+};
+
+type Poll = {
+  id: string;
+  activityId: string;
+  prompt: string;
+  sortOrder: number;
+  isClosed: boolean;
+  createdAt: string;
+  totalVotes: number;
+  options: PollOption[];
+};
+
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
 const stateLabels: Record<Activity["state"], string> = {
   DRAFT: "草稿活动",
@@ -32,17 +50,45 @@ const stateLabels: Record<Activity["state"], string> = {
   ENDED: "已结束活动"
 };
 
+function PollBar({ percentage }: { percentage: number }) {
+  return (
+    <div className="h-2 w-full rounded-sm bg-stone-200">
+      <div
+        className="h-2 rounded-sm bg-emerald-600 transition-all"
+        style={{ width: `${Math.max(percentage, 2)}%` }}
+      />
+    </div>
+  );
+}
+
 export default function HostPage() {
   const [title, setTitle] = useState("TypeScript 现场问答");
   const [formError, setFormError] = useState<string | null>(null);
   const [activityError, setActivityError] = useState<string | null>(null);
   const [busyActivityId, setBusyActivityId] = useState<string | null>(null);
   const [busyQuestionId, setBusyQuestionId] = useState<string | null>(null);
+
+  // Poll form state
+  const [pollPrompt, setPollPrompt] = useState("");
+  const [pollOptions, setPollOptions] = useState<string[]>(["", ""]);
+  const [pollFormError, setPollFormError] = useState<string | null>(null);
+  const [expandedPollActivity, setExpandedPollActivity] = useState<string | null>(null);
+
   const { data, mutate, isLoading } = useSWR<{ activities: Activity[] }>(
     "/api/host/activities?ownerId=demo-host",
     fetcher,
     { refreshInterval: 2000 }
   );
+
+  // Polls data per activity
+  const [pollsMap, setPollsMap] = useState<Record<string, Poll[]>>({});
+
+  async function fetchPolls(activityId: string) {
+    const response = await fetch(`/api/host/activities/${activityId}/polls`);
+    if (!response.ok) return;
+    const body = (await response.json()) as { polls?: Poll[] };
+    setPollsMap((prev) => ({ ...prev, [activityId]: body.polls ?? [] }));
+  }
 
   async function createActivity(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -115,6 +161,99 @@ export default function HostPage() {
     await mutate();
   }
 
+  async function createPoll(activityId: string, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPollFormError(null);
+    const validOptions = pollOptions.map((o) => o.trim()).filter(Boolean);
+    if (!pollPrompt.trim() || validOptions.length < 2) {
+      setPollFormError("投票需要至少一个问题与两个选项。");
+      return;
+    }
+
+    const response = await fetch(`/api/host/activities/${activityId}/polls`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        prompt: pollPrompt,
+        options: validOptions.map((text) => ({ text }))
+      })
+    });
+
+    if (!response.ok) {
+      const body = (await response.json()) as { error?: string };
+      setPollFormError(body.error ?? "创建投票失败。");
+      return;
+    }
+
+    setPollPrompt("");
+    setPollOptions(["", ""]);
+    await fetchPolls(activityId);
+  }
+
+  async function closePollAction(pollId: string, activityId: string) {
+    setActivityError(null);
+    const response = await fetch(`/api/host/polls/${pollId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "close" })
+    });
+
+    if (!response.ok) {
+      const body = (await response.json()) as { error?: string };
+      setActivityError(body.error ?? "关闭投票失败。");
+      return;
+    }
+
+    await fetchPolls(activityId);
+  }
+
+  async function deletePollAction(pollId: string, activityId: string) {
+    setActivityError(null);
+    const response = await fetch(`/api/host/polls/${pollId}`, {
+      method: "DELETE"
+    });
+
+    if (!response.ok) {
+      const body = (await response.json()) as { error?: string };
+      setActivityError(body.error ?? "删除投票失败。");
+      return;
+    }
+
+    await fetchPolls(activityId);
+  }
+
+  async function reorderPolls(activityId: string, pollIds: string[]) {
+    setActivityError(null);
+    const response = await fetch(`/api/host/activities/${activityId}/polls/reorder`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pollIds })
+    });
+
+    if (!response.ok) {
+      const body = (await response.json()) as { error?: string };
+      setActivityError(body.error ?? "排序失败。");
+      return;
+    }
+
+    await fetchPolls(activityId);
+  }
+
+  function addPollOption() {
+    if (pollOptions.length < 8) {
+      setPollOptions([...pollOptions, ""]);
+    }
+  }
+
+  function updatePollOption(index: number, value: string) {
+    setPollOptions((prev) => prev.map((opt, idx) => (idx === index ? value : opt)));
+  }
+
+  function removePollOption(index: number) {
+    if (pollOptions.length > 2) {
+      setPollOptions((prev) => prev.filter((_, idx) => idx !== index));
+    }
+  }
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-6 py-8">
@@ -213,6 +352,8 @@ export default function HostPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Questions section */}
                 <section className="mt-4 border-t border-stone-200 pt-4">
                   <h4 className="text-sm font-semibold text-stone-900">观众问题</h4>
                   {activity.questions.length > 0 ? (
@@ -318,6 +459,205 @@ export default function HostPage() {
                     <p className="mt-2 text-sm text-stone-500">暂无观众问题。</p>
                   )}
                 </section>
+
+                {/* Polls section — only for LIVE activities */}
+                {activity.state === "LIVE" ? (
+                  <section className="mt-4 border-t border-stone-200 pt-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-semibold text-stone-900">投票</h4>
+                      <button
+                        className="rounded-sm border border-stone-300 px-2 py-1 text-xs text-stone-600"
+                        onClick={() => {
+                          if (expandedPollActivity === activity.id) {
+                            setExpandedPollActivity(null);
+                          } else {
+                            setExpandedPollActivity(activity.id);
+                            void fetchPolls(activity.id);
+                          }
+                        }}
+                        type="button"
+                      >
+                        {expandedPollActivity === activity.id ? "收起投票" : "展开投票"}
+                      </button>
+                    </div>
+
+                    {expandedPollActivity === activity.id ? (
+                      <div className="mt-3 flex flex-col gap-4">
+                        {/* Create poll form */}
+                        <form
+                          className="flex flex-col gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-4"
+                          onSubmit={(event) => void createPoll(activity.id, event)}
+                        >
+                          <label className="flex flex-col gap-1 text-sm font-medium text-stone-800">
+                            投票问题
+                            <input
+                              className="rounded-md border border-stone-300 px-3 py-2 text-base outline-none focus:border-emerald-700"
+                              maxLength={200}
+                              onChange={(event) => setPollPrompt(event.target.value)}
+                              placeholder="投票的问题"
+                              value={pollPrompt}
+                            />
+                          </label>
+                          <div className="flex flex-col gap-2">
+                            <p className="text-sm font-medium text-stone-800">投票选项</p>
+                            {pollOptions.map((option, index) => (
+                              <div className="flex items-center gap-2" key={index}>
+                                <input
+                                  className="flex-1 rounded-md border border-stone-300 px-3 py-2 text-base outline-none focus:border-emerald-700"
+                                  maxLength={100}
+                                  onChange={(event) => updatePollOption(index, event.target.value)}
+                                  placeholder={`选项 ${index + 1}`}
+                                  value={option}
+                                />
+                                {pollOptions.length > 2 ? (
+                                  <button
+                                    className="rounded-sm border border-red-200 px-2 py-2 text-xs text-red-600"
+                                    onClick={() => removePollOption(index)}
+                                    type="button"
+                                  >
+                                    ✕
+                                  </button>
+                                ) : null}
+                              </div>
+                            ))}
+                            <button
+                              className="self-start rounded-sm border border-stone-300 px-2 py-1 text-xs text-stone-600"
+                              disabled={pollOptions.length >= 8}
+                              onClick={addPollOption}
+                              type="button"
+                            >
+                              + 添加选项
+                            </button>
+                          </div>
+                          {pollFormError ? (
+                            <p className="text-sm text-red-700">{pollFormError}</p>
+                          ) : null}
+                          <button
+                            className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white"
+                            type="submit"
+                          >
+                            创建投票
+                          </button>
+                        </form>
+
+                        {/* Existing polls */}
+                        {(pollsMap[activity.id] ?? []).length > 0 ? (
+                          <ul className="flex flex-col gap-3">
+                            {pollsMap[activity.id].map((poll, pollIndex) => {
+                              const hasVotes = poll.totalVotes > 0;
+                              return (
+                                <li
+                                  className="rounded-md border border-stone-200 bg-stone-50 p-4"
+                                  key={poll.id}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <h5 className="text-base font-semibold text-stone-900">
+                                          {poll.prompt}
+                                        </h5>
+                                        {poll.isClosed ? (
+                                          <span className="rounded-sm bg-stone-200 px-1.5 py-0.5 text-xs font-medium text-stone-600">
+                                            已关闭
+                                          </span>
+                                        ) : (
+                                          <span className="rounded-sm bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800">
+                                            进行中
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="mt-1 text-xs text-stone-500">
+                                        总票数 {poll.totalVotes} ·{" "}
+                                        {new Date(poll.createdAt).toLocaleTimeString("zh-CN", {
+                                          hour: "2-digit",
+                                          minute: "2-digit"
+                                        })}
+                                      </p>
+                                    </div>
+                                    <div className="flex shrink-0 flex-wrap gap-1">
+                                      {!hasVotes && !poll.isClosed ? (
+                                        <>
+                                          <button
+                                            className="rounded-sm border border-red-200 px-1.5 py-0.5 text-xs text-red-600"
+                                            onClick={() => void deletePollAction(poll.id, activity.id)}
+                                            type="button"
+                                          >
+                                            删除
+                                          </button>
+                                        </>
+                                      ) : null}
+                                      {!poll.isClosed ? (
+                                        <button
+                                          className="rounded-sm border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700"
+                                          onClick={() => void closePollAction(poll.id, activity.id)}
+                                          type="button"
+                                        >
+                                          关闭投票
+                                        </button>
+                                      ) : null}
+                                      {(pollsMap[activity.id] ?? []).length > 1 ? (
+                                        <>
+                                          {pollIndex > 0 ? (
+                                            <button
+                                              className="rounded-sm border border-stone-300 px-1.5 py-0.5 text-xs text-stone-600"
+                                              onClick={() => {
+                                                const ids = pollsMap[activity.id].map((p) => p.id);
+                                                [ids[pollIndex - 1], ids[pollIndex]] = [ids[pollIndex], ids[pollIndex - 1]];
+                                                void reorderPolls(activity.id, ids);
+                                              }}
+                                              type="button"
+                                            >
+                                              ↑
+                                            </button>
+                                          ) : null}
+                                          {pollIndex < pollsMap[activity.id].length - 1 ? (
+                                            <button
+                                              className="rounded-sm border border-stone-300 px-1.5 py-0.5 text-xs text-stone-600"
+                                              onClick={() => {
+                                                const ids = pollsMap[activity.id].map((p) => p.id);
+                                                [ids[pollIndex], ids[pollIndex + 1]] = [ids[pollIndex + 1], ids[pollIndex]];
+                                                void reorderPolls(activity.id, ids);
+                                              }}
+                                              type="button"
+                                            >
+                                              ↓
+                                            </button>
+                                          ) : null}
+                                        </>
+                                      ) : null}
+                                    </div>
+                                  </div>
+
+                                  {/* Results */}
+                                  <ul className="mt-3 flex flex-col gap-2">
+                                    {poll.options.map((option) => (
+                                      <li
+                                        className="flex flex-col gap-1"
+                                        key={option.id}
+                                      >
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="text-sm text-stone-800">
+                                            {option.text}
+                                          </span>
+                                          <span className="shrink-0 text-xs text-stone-500">
+                                            {option.count} 票 ({option.percentage}%)
+                                          </span>
+                                        </div>
+                                        <PollBar percentage={option.percentage} />
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        ) : (
+                          <p className="text-sm text-stone-500">暂无投票。</p>
+                        )}
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
               </article>
             ))}
             {!isLoading && (data?.activities ?? []).length === 0 ? (

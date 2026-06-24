@@ -397,6 +397,414 @@ export async function hideQuestion(questionId: string) {
 export function audienceQuestionMutationNotAllowed() {
   return new RequestError("观众问题提交后不能由观众编辑或删除。", 405);
 }
+// --- Poll helpers ---
+
+type PollOptionInput = { text: string };
+
+type PollRecord = {
+  id: string;
+  activityId: string;
+  prompt: string;
+  sortOrder: number;
+  isClosed: boolean;
+  createdAt: Date;
+  options: PollOptionRecord[];
+  _count?: { votes: number };
+  votes?: PollVoteRecord[];
+};
+
+type PollOptionRecord = {
+  id: string;
+  text: string;
+  sortOrder: number;
+  _count?: { votes: number };
+};
+
+type PollVoteRecord = {
+  pollOptionId: string;
+  audienceSessionId: string;
+};
+
+function toPollResult(
+  poll: PollRecord & { votes?: PollVoteRecord[] }
+) {
+  const optionVotes = new Map<string, number>();
+  const totalVotes = (poll.votes ?? []).length;
+  for (const vote of poll.votes ?? []) {
+    optionVotes.set(vote.pollOptionId, (optionVotes.get(vote.pollOptionId) ?? 0) + 1);
+  }
+
+  const options = poll.options.map((option) => {
+    const count = optionVotes.get(option.id) ?? 0;
+    const percentage = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+    return { id: option.id, text: option.text, count, percentage };
+  });
+
+  return {
+    id: poll.id,
+    activityId: poll.activityId,
+    prompt: poll.prompt,
+    sortOrder: poll.sortOrder,
+    isClosed: poll.isClosed,
+    createdAt: poll.createdAt,
+    totalVotes,
+    options
+  };
+}
+
+function toAudiencePoll(
+  poll: PollRecord & { votes?: PollVoteRecord[] },
+  audienceSessionId: string
+) {
+  const myVote = (poll.votes ?? []).find(
+    (v) => v.audienceSessionId === audienceSessionId
+  );
+
+  return {
+    id: poll.id,
+    prompt: poll.prompt,
+    sortOrder: poll.sortOrder,
+    isClosed: poll.isClosed,
+    createdAt: poll.createdAt,
+    options: poll.options.map((option) => ({
+      id: option.id,
+      text: option.text
+    })),
+    myOptionId: myVote?.pollOptionId ?? null
+  };
+}
+
+function toDisplayPoll(poll: PollRecord & { votes?: PollVoteRecord[] }) {
+  const optionVotes = new Map<string, number>();
+  const totalVotes = (poll.votes ?? []).length;
+  for (const vote of poll.votes ?? []) {
+    optionVotes.set(vote.pollOptionId, (optionVotes.get(vote.pollOptionId) ?? 0) + 1);
+  }
+
+  const options = poll.options.map((option) => {
+    const count = optionVotes.get(option.id) ?? 0;
+    const percentage = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+    return { id: option.id, text: option.text, percentage };
+  });
+
+  return {
+    id: poll.id,
+    prompt: poll.prompt,
+    sortOrder: poll.sortOrder,
+    isClosed: poll.isClosed,
+    createdAt: poll.createdAt,
+    totalVotes,
+    options
+  };
+}
+
+// --- Poll host actions ---
+
+export async function createPoll(input: {
+  activityId: string;
+  prompt: string;
+  options: PollOptionInput[];
+}) {
+  const activity = await findAccessibleActivityById(input.activityId);
+  if (!activity) {
+    throw new RequestError("找不到可管理的活动。", 404);
+  }
+  if (activity.state !== "LIVE") {
+    throw new RequestError("只有进行中活动可以创建投票。", 409);
+  }
+
+  const prompt = input.prompt.trim();
+  if (!prompt) {
+    throw new RequestError("投票问题不能为空。", 400);
+  }
+
+  const options = input.options
+    .map((option) => option.text.trim())
+    .filter(Boolean);
+  if (options.length < 2) {
+    throw new RequestError("投票至少需要两个选项。", 400);
+  }
+
+  const maxSort = await prisma.poll.findFirst({
+    where: { activityId: activity.id },
+    orderBy: { sortOrder: "desc" },
+    select: { sortOrder: true }
+  });
+  const nextSortOrder = (maxSort?.sortOrder ?? 0) + 1;
+
+  const poll = await prisma.poll.create({
+    data: {
+      activityId: activity.id,
+      prompt,
+      sortOrder: nextSortOrder,
+      options: {
+        create: options.map((text, index) => ({
+          text,
+          sortOrder: index
+        }))
+      }
+    },
+    include: {
+      options: { orderBy: { sortOrder: "asc" } },
+      _count: { select: { votes: true } }
+    }
+  });
+
+  return toPollResult(poll);
+}
+
+export async function listHostPolls(activityId: string) {
+  const activity = await findAccessibleActivityById(activityId);
+  if (!activity) {
+    throw new RequestError("找不到可管理的活动。", 404);
+  }
+
+  const polls = await prisma.poll.findMany({
+    where: { activityId },
+    include: {
+      options: { orderBy: { sortOrder: "asc" } },
+      votes: true
+    },
+    orderBy: { sortOrder: "desc" }
+  });
+
+  return polls.map(toPollResult);
+}
+
+export async function updatePoll(input: {
+  pollId: string;
+  prompt?: string;
+  options?: PollOptionInput[];
+}) {
+  const poll = await prisma.poll.findUnique({
+    where: { id: input.pollId },
+    include: { _count: { select: { votes: true } } }
+  });
+  if (!poll) {
+    throw new RequestError("找不到可操作的投票。", 404);
+  }
+  if (poll._count.votes > 0) {
+    throw new RequestError("已有投票选择的投票不可编辑。", 409);
+  }
+  if (poll.isClosed) {
+    throw new RequestError("已关闭投票不可编辑。", 409);
+  }
+
+  const data: { prompt?: string } = {};
+  if (input.prompt !== undefined) {
+    const prompt = input.prompt.trim();
+    if (!prompt) {
+      throw new RequestError("投票问题不能为空。", 400);
+    }
+    data.prompt = prompt;
+  }
+
+  if (input.options !== undefined) {
+    const textOptions = input.options.map((opt) => opt.text.trim()).filter(Boolean);
+    if (textOptions.length < 2) {
+      throw new RequestError("投票至少需要两个选项。", 400);
+    }
+
+    await prisma.pollOption.deleteMany({ where: { pollId: poll.id } });
+    await prisma.pollOption.createMany({
+      data: textOptions.map((text, index) => ({
+        pollId: poll.id,
+        text,
+        sortOrder: index
+      }))
+    });
+  }
+
+  const updated = await prisma.poll.update({
+    where: { id: poll.id },
+    data,
+    include: {
+      options: { orderBy: { sortOrder: "asc" } },
+      _count: { select: { votes: true } }
+    }
+  });
+
+  return toPollResult(updated);
+}
+
+export async function deletePoll(pollId: string) {
+  const poll = await prisma.poll.findUnique({
+    where: { id: pollId },
+    include: { _count: { select: { votes: true } } }
+  });
+  if (!poll) {
+    throw new RequestError("找不到可操作的投票。", 404);
+  }
+  if (poll._count.votes > 0) {
+    throw new RequestError("已有投票选择的投票不可删除。", 409);
+  }
+
+  await prisma.pollOption.deleteMany({ where: { pollId: poll.id } });
+  await prisma.poll.delete({ where: { id: poll.id } });
+
+  return { deleted: true };
+}
+
+export async function closePoll(pollId: string) {
+  const poll = await prisma.poll.findUnique({
+    where: { id: pollId },
+    include: { _count: { select: { votes: true } } }
+  });
+  if (!poll) {
+    throw new RequestError("找不到可操作的投票。", 404);
+  }
+  if (poll.isClosed) {
+    throw new RequestError("投票已关闭。", 409);
+  }
+  if (poll._count.votes === 0) {
+    throw new RequestError("没有投票选择的投票无法关闭。可以删除投票。", 409);
+  }
+
+  const updated = await prisma.poll.update({
+    where: { id: poll.id },
+    data: { isClosed: true },
+    include: {
+      options: { orderBy: { sortOrder: "asc" } },
+      votes: true
+    }
+  });
+
+  return toPollResult(updated);
+}
+
+export async function reorderPolls(input: {
+  activityId: string;
+  pollIds: string[];
+}) {
+  // Use descending sort order: first in list gets highest value
+  const total = input.pollIds.length;
+  for (let index = 0; index < input.pollIds.length; index += 1) {
+    await prisma.poll.update({
+      where: { id: input.pollIds[index] },
+      data: { sortOrder: total - index }
+    });
+  }
+
+  return { reordered: true };
+}
+
+// --- Poll audience actions ---
+
+export async function listAudiencePolls(
+  accessCode: string,
+  audienceSessionId: string
+) {
+  const activity = await findPublicActivityByAccessCode(accessCode);
+  if (!activity) {
+    throw new RequestError("找不到可访问的活动。", 404);
+  }
+
+  const audienceSession = await prisma.audienceSession.findFirst({
+    where: { id: audienceSessionId, activityId: activity.id },
+    select: { id: true }
+  });
+  if (!audienceSession) {
+    throw new RequestError("找不到此活动的观众会话。", 404);
+  }
+
+  const polls = await prisma.poll.findMany({
+    where: { activityId: activity.id },
+    include: {
+      options: { orderBy: { sortOrder: "asc" } },
+      votes: { where: { audienceSessionId } }
+    },
+    orderBy: { sortOrder: "desc" }
+  });
+
+  return polls.map((poll) => toAudiencePoll(poll, audienceSessionId));
+}
+
+export async function castVote(input: {
+  pollId: string;
+  audienceSessionId: string;
+  pollOptionId: string;
+}) {
+  const poll = await prisma.poll.findUnique({
+    where: { id: input.pollId },
+    include: {
+      activity: { select: { id: true, state: true } },
+      options: { select: { id: true } }
+    }
+  });
+  if (!poll) {
+    throw new RequestError("找不到可投票的投票。", 404);
+  }
+  if (poll.activity.state !== "LIVE") {
+    throw new RequestError("只有进行中活动可以投票。", 409);
+  }
+  if (poll.isClosed) {
+    throw new RequestError("已关闭投票不接受投票选择。", 409);
+  }
+
+  const audienceSession = await prisma.audienceSession.findFirst({
+    where: { id: input.audienceSessionId, activityId: poll.activity.id },
+    select: { id: true }
+  });
+  if (!audienceSession) {
+    throw new RequestError("找不到此活动的观众会话。", 404);
+  }
+
+  const option = poll.options.find((opt) => opt.id === input.pollOptionId);
+  if (!option) {
+    throw new RequestError("无效的投票选项。", 400);
+  }
+
+  const existing = await prisma.pollVote.findUnique({
+    where: {
+      pollId_audienceSessionId: {
+        pollId: poll.id,
+        audienceSessionId: audienceSession.id
+      }
+    }
+  });
+
+  if (existing) {
+    if (existing.pollOptionId === input.pollOptionId) {
+      return { voted: true, unchanged: true };
+    }
+
+    await prisma.pollVote.update({
+      where: { id: existing.id },
+      data: { pollOptionId: input.pollOptionId, updatedAt: new Date() }
+    });
+
+    return { voted: true, updated: true };
+  }
+
+  await prisma.pollVote.create({
+    data: {
+      pollId: poll.id,
+      pollOptionId: input.pollOptionId,
+      audienceSessionId: audienceSession.id
+    }
+  });
+
+  return { voted: true, created: true };
+}
+
+export async function listDisplayPolls(accessCode: string) {
+  const activity = await findPublicActivityByAccessCode(accessCode);
+  if (!activity) {
+    throw new RequestError("找不到可访问的活动。", 404);
+  }
+
+  const polls = await prisma.poll.findMany({
+    where: { activityId: activity.id },
+    include: {
+      options: { orderBy: { sortOrder: "asc" } },
+      votes: true
+    },
+    orderBy: { sortOrder: "desc" }
+  });
+
+  return polls.map(toDisplayPoll);
+}
+
 
 async function findPublicActivityByAccessCode(accessCode: string) {
   return prisma.activity.findFirst({

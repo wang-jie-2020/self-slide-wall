@@ -24,6 +24,21 @@ type AudienceActivity = {
   questions: AudienceQuestion[];
 };
 
+type AudiencePollOption = {
+  id: string;
+  text: string;
+};
+
+type AudiencePoll = {
+  id: string;
+  prompt: string;
+  sortOrder: number;
+  isClosed: boolean;
+  createdAt: string;
+  options: AudiencePollOption[];
+  myOptionId: string | null;
+};
+
 const fetcher = (url: string) => fetch(url).then((response) => response.json());
 
 export default function JoinPage() {
@@ -37,8 +52,22 @@ export default function JoinPage() {
   const [error, setError] = useState<string | null>(null);
   const [likingQuestionId, setLikingQuestionId] = useState<string | null>(null);
   const [likedQuestions, setLikedQuestions] = useState<Set<string>>(new Set());
+
+  // Optimistic poll state
+  const [optimisticPolls, setOptimisticPolls] = useState<Record<string, string | null>>({});
+  const [votingPollId, setVotingPollId] = useState<string | null>(null);
+
   const { data, isLoading, mutate } = useSWR<{ activity: AudienceActivity }>(
     accessCode ? `/api/audience/activities/${accessCode}` : null,
+    fetcher,
+    { refreshInterval: 2000 }
+  );
+
+  // Polls SWR
+  const { data: pollData, mutate: mutatePolls } = useSWR<{ polls: AudiencePoll[] }>(
+    accessCode && audienceSessionId
+      ? `/api/audience/activities/${accessCode}/polls?audienceSessionId=${audienceSessionId}`
+      : null,
     fetcher,
     { refreshInterval: 2000 }
   );
@@ -112,6 +141,46 @@ export default function JoinPage() {
 
     setLikingQuestionId(null);
   }
+
+  async function castVote(pollId: string, optionId: string) {
+    if (!audienceSessionId) return;
+    setError(null);
+    setVotingPollId(pollId);
+
+    // Optimistic update
+    setOptimisticPolls((prev) => ({ ...prev, [pollId]: optionId }));
+    void mutatePolls();
+
+    const response = await fetch(`/api/audience/polls/${pollId}/vote`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ audienceSessionId, pollOptionId: optionId })
+    });
+    const body = (await response.json()) as { error?: string };
+
+    if (!response.ok) {
+      setOptimisticPolls((prev) => {
+        const next = { ...prev };
+        delete next[pollId];
+        return next;
+      });
+      void mutatePolls();
+      setError(body.error ?? "投票失败。");
+    } else {
+      await mutatePolls();
+    }
+
+    setVotingPollId(null);
+  }
+
+  // Merge optimistic poll state with server data
+  const polls = (pollData?.polls ?? []).map((poll) => {
+    const optimistic = optimisticPolls[poll.id];
+    if (optimistic !== undefined) {
+      return { ...poll, myOptionId: optimistic };
+    }
+    return poll;
+  });
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-6 px-6 py-8">
@@ -194,6 +263,80 @@ export default function JoinPage() {
               </p>
             ) : null}
           </form>
+
+          {/* Polls section */}
+          {audienceSessionId && polls.length > 0 ? (
+            <section className="flex flex-col gap-3">
+              <h2 className="text-lg font-semibold text-stone-950">进行中投票</h2>
+              <ul className="flex flex-col gap-3">
+                {polls.map((poll) => (
+                  <li
+                    className="rounded-md border border-stone-300 bg-white p-5 shadow-sm"
+                    key={poll.id}
+                  >
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base font-semibold text-stone-900">
+                        {poll.prompt}
+                      </h3>
+                      {poll.isClosed ? (
+                        <span className="rounded-sm bg-stone-200 px-1.5 py-0.5 text-xs font-medium text-stone-600">
+                          已关闭
+                        </span>
+                      ) : null}
+                    </div>
+                    <ul className="mt-3 flex flex-col gap-2">
+                      {poll.options.map((option) => {
+                        const isSelected = poll.myOptionId === option.id;
+                        const canVote =
+                          !poll.isClosed &&
+                          data.activity.acceptsInteraction &&
+                          audienceSessionId;
+
+                        return (
+                          <li key={option.id}>
+                            <button
+                              className={`flex w-full items-center gap-3 rounded-md border px-4 py-3 text-left text-sm transition-colors ${
+                                isSelected
+                                  ? "border-emerald-500 bg-emerald-50 text-emerald-900"
+                                  : poll.isClosed
+                                    ? "border-stone-200 bg-stone-50 text-stone-500"
+                                    : canVote
+                                      ? "border-stone-200 hover:border-emerald-300 hover:bg-emerald-50"
+                                      : "border-stone-200 bg-stone-50 text-stone-400"
+                              }`}
+                              disabled={
+                                !canVote || votingPollId === poll.id
+                              }
+                              onClick={() => void castVote(poll.id, option.id)}
+                              type="button"
+                            >
+                              <span
+                                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${
+                                  isSelected
+                                    ? "border-emerald-600 bg-emerald-600"
+                                    : "border-stone-300"
+                                }`}
+                              >
+                                {isSelected ? (
+                                  <span className="h-2 w-2 rounded-full bg-white" />
+                                ) : null}
+                              </span>
+                              <span>{option.text}</span>
+                              {isSelected && poll.isClosed ? (
+                                <span className="ml-auto text-xs text-stone-500">
+                                  你的选择
+                                </span>
+                              ) : null}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <section className="flex flex-col gap-3">
             <h2 className="text-lg font-semibold text-stone-950">观众问题</h2>

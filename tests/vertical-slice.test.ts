@@ -114,6 +114,10 @@ async function moveActivity(activityId: string, action: "start" | "end") {
 }
 
 beforeEach(async () => {
+  await prisma.questionLike.deleteMany();
+  await prisma.pollVote.deleteMany();
+  await prisma.pollOption.deleteMany();
+  await prisma.poll.deleteMany();
   await prisma.audienceQuestion.deleteMany();
   await prisma.audienceSession.deleteMany();
   await prisma.activity.deleteMany();

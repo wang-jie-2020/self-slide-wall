@@ -25,6 +25,7 @@ model Activity {
   owner             HostAccount       @relation(fields: [ownerId], references: [id])
   audienceSessions  AudienceSession[]
   audienceQuestions AudienceQuestion[]
+  polls             Poll[]
 }
 
 model AudienceSession {
@@ -35,6 +36,7 @@ model AudienceSession {
   activity          Activity           @relation(fields: [activityId], references: [id])
   audienceQuestions AudienceQuestion[]
   questionLikes     QuestionLike[]
+  pollVotes         PollVote[]
 }
 
 model AudienceQuestion {
@@ -69,4 +71,45 @@ model QuestionLike {
 
   @@unique([audienceQuestionId, audienceSessionId])
   @@index([audienceQuestionId])
+}
+
+model Poll {
+  id         String       @id @default(cuid())
+  activityId String
+  prompt     String
+  sortOrder  Float        @default(0)
+  isClosed   Boolean      @default(false)
+  createdAt  DateTime     @default(now())
+  activity   Activity     @relation(fields: [activityId], references: [id])
+  options    PollOption[]
+  votes      PollVote[]
+
+  @@index([activityId, sortOrder])
+}
+
+model PollOption {
+  id        String      @id @default(cuid())
+  pollId    String
+  text      String
+  sortOrder Int         @default(0)
+  poll      Poll        @relation(fields: [pollId], references: [id])
+  votes     PollVote[]
+
+  @@index([pollId, sortOrder])
+}
+
+model PollVote {
+  id                String          @id @default(cuid())
+  pollId            String
+  pollOptionId      String
+  audienceSessionId String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @default(now())
+  poll              Poll            @relation(fields: [pollId], references: [id])
+  pollOption        PollOption      @relation(fields: [pollOptionId], references: [id])
+  audienceSession   AudienceSession @relation(fields: [audienceSessionId], references: [id])
+
+  @@unique([pollId, audienceSessionId])
+  @@index([pollId])
+  @@index([pollId, pollOptionId])
 }
