@@ -14,7 +14,7 @@
 
 活动按草稿活动、进行中活动、已结束活动单向流转。草稿活动用于准备，不接受观众互动；进行中活动接受观众问题、问题点赞和投票选择；已结束活动保持只读访问，但不能重新开启。重复场次或后续场次必须创建新的活动。
 
-观众视图让观众提交观众问题、点赞可见且未回答的问题、参与进行中投票，并立即获得观众乐观反馈。主持控制台让主持账号创建活动、控制活动生命周期、置顶问题、标记已回答问题、隐藏问题、创建和关闭投票、调整投票排序、查看投票结果、导出活动数据并软删除活动。展示视图用于现场投屏，公开只读地展示加入信息、排序后的问题墙、置顶问题和投票结果。
+观众视图让观众提交观众问题、点赞可见且未回答的问题、参与进行中投票，并立即获得观众乐观反馈。主持控制台让主持账号创建活动、控制活动生命周期、置顶问题、标记已回答问题、隐藏问题、创建和关闭投票、调整投票排序、查看投票结果、导出活动数据并软删除活动。展示视图由主持账号打开并投屏，是主持账号在演示现场的操作界面，观众消费投屏内容。展示视图组合展示加入信息、排序后的问题墙、置顶问题和投票结果，并支持主持账号直接进行置顶/取消置顶、标记回答、隐藏问题和关闭投票等控场操作。展示视图与主持控制台职责边界明确：展示视图侧重投屏现场的轻量控场，主持控制台侧重完整的活动管理和数据查看。
 
 各视图应支持近实时更新：活动更新通常在 1-2 秒内出现在观众视图、展示视图和主持控制台中，且不需要用户手动刷新页面。实现方式不在产品模型中承诺为长连接、轮询或其他具体机制。
 
@@ -105,14 +105,22 @@
 63. As a 现场观众, I want 展示视图 to show 投票结果 as percentages, so that the audience can understand aggregate responses without needing raw counts.
 64. As a 现场观众, I want 展示视图 updates to appear within 1-2 seconds, so that the projected content feels live.
 
+### 主持账号 - 展示视图控场
+
+65. As a 主持账号, I want to pin or unpin a 观众问题 directly from 展示视图, so that I can manage the spotlight without leaving the projected view.
+66. As a 主持账号, I want to mark a 观众问题 as answered directly from 展示视图, so that I can clean the wall on the fly during the 演讲.
+67. As a 主持账号, I want to hide a 观众问题 directly from 展示视图, so that I can remove inappropriate content immediately.
+68. As a 主持账号, I want to close a 投票 directly from 展示视图, so that I can end a poll without switching to 主持控制台.
+69. As a 主持账号, I want the display view to show only the applicable control buttons based on current state, so that the interface does not mislead about available actions.
+
 ### 主持账号 - 产品边界与发布约束
 
-65. As a 主持账号, I want to keep the product separate from full 演讲 management, so that the tool stays focused on live interaction.
-66. As a 主持账号, I want the first version to target about 200 active 观众会话 per 活动, so that scope and implementation choices fit the expected live usage.
-67. As a 主持账号, I want the first version to use only a few example 主持账号 if needed, so that account management does not distract from the core live interaction.
-68. As a 主持账号, I want the UI to be allowed to ship in Chinese first, so that the MVP can focus on core behavior before full internationalization.
-69. As a 主持账号, I want not to commit to a specific near-real-time transport in the product model, so that implementation can choose the simplest reliable mechanism.
-70. As a 主持账号, I want deleted 活动 data to be retainable, so that soft deletion does not imply permanent data destruction.
+70. As a 主持账号, I want to keep the product separate from full 演讲 management, so that the tool stays focused on live interaction.
+71. As a 主持账号, I want the first version to target about 200 active 观众会话 per 活动, so that scope and implementation choices fit the expected live usage.
+72. As a 主持账号, I want the first version to use only a few example 主持账号 if needed, so that account management does not distract from the core live interaction.
+73. As a 主持账号, I want the UI to be allowed to ship in Chinese first, so that the MVP can focus on core behavior before full internationalization.
+74. As a 主持账号, I want not to commit to a specific near-real-time transport in the product model, so that implementation can choose the simplest reliable mechanism.
+75. As a 主持账号, I want deleted 活动 data to be retainable, so that soft deletion does not imply permanent data destruction.
 
 ## Implementation Decisions
 
@@ -143,8 +151,18 @@
 - 投票排序 is controlled from 主持控制台 and is shared by 观众视图 and 展示视图. Newly created polls appear first by default.
 - A 投票 may be edited or deleted only before it receives any 投票选择.
 - After a 投票 receives at least one 投票选择, it can be closed but cannot have its prompt or 投票选项 changed and cannot be deleted.
-- 已关闭投票 accepts no further 投票选择 but can still display 投票结果.
+- 已关闭投票 accepts no further 投票选择 but can still display 投票结果。关闭投票不要求已有投票选择（允许 0 票关闭）。
 - 投票结果 visibility differs by view: 观众视图 shows only the current 观众会话's own 投票选择; 展示视图 shows percentage results; 主持控制台 shows percentages and raw counts.
+- 展示视图由主持账号打开并操作，用于现场投屏；观众仅消费投屏内容。展示视图与主持控制台职责边界明确：展示视图侧重投屏现场的轻量控场（置顶/取消置顶、标记回答、隐藏问题、关闭投票），主持控制台侧重完整的活动管理和数据查看。
+- 展示视图的直接控场操作限定为四类：置顶/取消置顶观众问题、标记观众问题为已回答、隐藏观众问题、关闭投票。
+- 展示视图控场按钮的显示条件固定为：
+  - 置顶按钮：`!question.isPinned` 时显示
+  - 取消置顶按钮：`question.isPinned` 时显示
+  - 标记回答按钮：`!question.isAnswered` 时显示
+  - 隐藏按钮：`!question.isHidden` 时显示
+  - 关闭投票按钮：`!poll.isClosed` 时显示
+- 从展示视图关闭投票不要求投票已有投票选择；允许 0 票关闭，与主持控制台行为一致。
+
 - 活动导出 is a CSV export for post-event review. It includes 观众问题, 问题点赞, 投票, 投票选项, and 投票结果.
 - 观众视图, 展示视图, and 主持控制台 should all receive near-real-time updates within 1-2 seconds without manual refresh.
 - The product contract requires near-real-time behavior but does not prescribe whether the implementation uses long polling, server-sent events, WebSockets, short polling, or another transport.
@@ -159,6 +177,9 @@
 - Lifecycle tests should cover 草稿活动, 进行中活动, 已结束活动, and 已删除活动 from the perspective of each view. They should verify that 已结束活动 is read-only and cannot be reopened.
 - Question tests should cover 问题字数限制, immutable submitted questions, anonymous and display-name submissions, one-like-per-观众会话 behavior, pinned ordering, answered removal, and hidden removal.
 - Poll tests should cover 单选投票, changing 投票选择 before close, multiple 进行中投票, 投票排序, edit/delete before any selection, non-editability and non-deletability after receiving a selection, 已关闭投票 behavior, and view-specific 投票结果 visibility.
+- Display view moderation tests should cover pinning and unpinning questions, marking questions answered, hiding questions, and closing polls directly from 展示视图. They should verify that control buttons follow the display conditions (`!question.isPinned`, `question.isPinned`, `!question.isAnswered`, `!question.isHidden`, `!poll.isClosed`) and that operations are reflected in 观众视图 and 主持控制台 within the near-real-time window.
+- 0-vote close tests should verify that a poll with zero 投票选择 can be closed from both 展示视图 and 主持控制台, and that the closed poll still displays results correctly.
+
 - Near-real-time tests should verify that updates propagate to 观众视图, 展示视图, and 主持控制台 without manual refresh within the product target window. These tests should assert the visible update behavior, not the transport mechanism.
 - Export tests should verify that 活动导出 contains the expected CSV records for 观众问题, 问题点赞, 投票, 投票选项, and 投票结果.
 - Scale-oriented tests should model the target activity scale of about 200 active 观众会话 for a single 活动 and verify that the core flows remain usable.
