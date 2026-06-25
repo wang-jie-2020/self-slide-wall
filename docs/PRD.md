@@ -2,9 +2,9 @@
 
 ## Problem Statement
 
-演讲、分享等展示型活动中，观众通常有问题、共鸣和即时反馈，但现场时间有限，演讲者和控场人很难判断哪些观众问题最值得优先回应。传统举手、纸条或聊天流容易丢失上下文，也不适合投屏展示和活动后复盘。
+演讲、分享等展示型活动中，观众通常有问题、共鸣和即时反馈，但现场时间有限，主持账号很难判断哪些观众问题最值得优先回应。传统举手、纸条或聊天流容易丢失上下文，也不适合投屏展示和活动后复盘。
 
-活动需要一个轻量、近实时、适合约 200 个活跃观众会话同时参与的观众提问墙。观众应能快速加入活动、提交观众问题、为自己也关心的问题点赞，并参与控场人或演讲者发起的单选投票。演讲者和控场人需要在主持控制台中管理活动、问题和投票，展示视图需要把加入入口、问题墙和投票结果稳定地展示给现场观众。
+活动需要一个轻量、近实时、适合约 200 个活跃观众会话同时参与的观众提问墙。观众应能快速加入活动、提交观众问题、为自己也关心的问题点赞，并参与主持账号发起的单选投票。主持账号需要在主持控制台中管理活动、问题和投票，展示视图需要把加入入口、问题墙和投票结果稳定地展示给现场观众。
 
 产品建模的是现场互动活动，而不是演讲、会议、议程或完整会议管理系统。
 
@@ -14,11 +14,13 @@
 
 活动按草稿活动、进行中活动、已结束活动单向流转。草稿活动用于准备，不接受观众互动；进行中活动接受观众问题、问题点赞和投票选择；已结束活动保持只读访问，但不能重新开启。重复场次或后续场次必须创建新的活动。
 
-观众视图让观众提交观众问题、点赞可见且未回答的问题、参与进行中投票，并立即获得观众乐观反馈。主持控制台让演讲者或控场人创建活动、控制活动生命周期、置顶问题、标记已回答问题、隐藏问题、创建和关闭投票、调整投票排序、查看投票结果、导出活动数据并软删除活动。展示视图用于现场投屏，公开只读地展示加入信息、排序后的问题墙、置顶问题和投票结果。
+观众视图让观众提交观众问题、点赞可见且未回答的问题、参与进行中投票，并立即获得观众乐观反馈。主持控制台让主持账号创建活动、控制活动生命周期、置顶问题、标记已回答问题、隐藏问题、创建和关闭投票、调整投票排序、查看投票结果、导出活动数据并软删除活动。展示视图用于现场投屏，公开只读地展示加入信息、排序后的问题墙、置顶问题和投票结果。
 
 各视图应支持近实时更新：活动更新通常在 1-2 秒内出现在观众视图、展示视图和主持控制台中，且不需要用户手动刷新页面。实现方式不在产品模型中承诺为长连接、轮询或其他具体机制。
 
 ## User Stories
+
+### 主持账号 - 活动管理
 
 1. As a 主持账号, I want to create an 活动, so that I can prepare a 观众提问墙 for a live 演讲.
 2. As a 主持账号, I want each 活动 to receive a generated 访问码, so that 观众 can join without needing an account.
@@ -30,26 +32,35 @@
 8. As a 主持账号, I want 已结束活动 to be impossible to reopen, so that the timeline of 观众问题 and 投票 remains trustworthy.
 9. As a 主持账号, I want to create a new 活动 for a repeated 演讲, so that the new audience interaction is separated from the previous timeline.
 10. As a 主持账号, I want to soft delete an 活动, so that it disappears from my default 主持控制台 list and is no longer publicly accessible.
+
+### 观众 - 加入与身份
+
 11. As a 观众, I want to join an 活动 through a 访问码, so that I can participate without installing software.
 12. As a 观众, I want to join an 活动 through a direct link, so that I can enter from a shared entry point or QR code.
 13. As a 观众, I want to enter anonymously, so that I can ask a question without providing a name.
 14. As a 观众, I want to provide an optional 显示名, so that my 观众问题 can carry useful context without becoming a verified identity.
 15. As a 观众, I want my 观众会话 to stay in the same browser for the 活动, so that my display name, question likes, and poll choices remain consistent.
 16. As a 观众, I want to see that a 草稿活动 is not yet accepting interaction, so that I understand why I cannot submit questions or poll choices.
-17. As a 观众, I want to submit a 观众问题 during a 进行中活动, so that the 演讲者 can consider answering it.
+
+### 观众 - 问题互动
+
+17. As a 观众, I want to submit a 观众问题 during a 进行中活动, so that the 主持账号 can consider answering it.
 18. As a 观众, I want the 问题字数限制 to be clear before submitting, so that I can keep my question within the allowed length.
 19. As a 观众, I want submitted 观众问题 to be immutable, so that the activity timeline stays reliable.
 20. As a 观众, I want to receive 观众乐观反馈 after submitting a question, so that I know my action was registered immediately.
 21. As a 观众, I want service-side confirmation to remain authoritative, so that stale or invalid local actions do not corrupt the 活动 state.
 22. As a 观众, I want to see visible and unanswered 观众问题, so that I can understand what others are asking.
-23. As a 观众, I want 置顶问题 to appear before normally sorted questions, so that I can see what the 控场人 has prioritized.
+23. As a 观众, I want 置顶问题 to appear before normally sorted questions, so that I can see what the 主持账号 has prioritized.
 24. As a 观众, I want non-pinned questions to use 问题排序, so that the most supported questions are easiest to notice.
 25. As a 观众, I want questions with equal likes to be ordered by submission time, so that ties behave predictably.
 26. As a 观众, I want 已回答问题 to leave the main question list, so that the visible wall stays focused on pending questions.
 27. As a 观众, I want 隐藏问题 to disappear from 观众视图, so that unsafe or off-topic content is not shown.
-28. As a 观众, I want to add a 问题点赞 to a question I also care about, so that the 演讲者 can see shared interest.
+28. As a 观众, I want to add a 问题点赞 to a question I also care about, so that the 主持账号 can see shared interest.
 29. As a 观众, I want my 观众会话 to contribute at most one like per question, so that 问题点赞 reflects audience breadth rather than repeated clicking.
-30. As a 观众, I want to participate in a 进行中投票, so that I can respond to a structured question from the 控场人 or 演讲者.
+
+### 观众 - 投票与活动结束
+
+30. As a 观众, I want to participate in a 进行中投票, so that I can respond to a structured question from the 主持账号.
 31. As a 观众, I want each 单选投票 to allow one selected 投票选项, so that my 投票选择 is unambiguous.
 32. As a 观众, I want to change my 投票选择 before the 投票 closes, so that I can correct a mistake or update my answer.
 33. As a 观众, I want the 观众视图 to show my own 投票选择, so that I know what I selected.
@@ -57,39 +68,51 @@
 35. As a 观众, I want the 观众视图 to stop accepting interaction after the 活动 ends, so that I do not accidentally submit to a closed event.
 36. As a 观众, I want an 已结束活动 to remain viewable through its 访问码 in read-only mode, so that I can review what happened.
 37. As a 观众, I want an 已删除活动 to be inaccessible through 观众视图, so that removed activity content is not publicly available.
-38. As a 控场人, I want to view incoming 观众问题 in the 主持控制台, so that I can manage the live question flow.
-39. As a 控场人, I want to pin a 观众问题, so that it appears before normal 问题排序 in 观众视图 and 展示视图.
-40. As a 控场人, I want to unpin a 置顶问题, so that it returns to normal ordering.
-41. As a 控场人, I want to mark a 观众问题 as an 已回答问题, so that it leaves the main visible question list.
-42. As a 控场人, I want to mark an 已回答问题 as not answered, so that it can return to the pending question flow.
-43. As a 控场人, I want to hide a 观众问题, so that I can remove low-quality or inappropriate content from public views.
-44. As a 控场人, I want hidden content to be treated as a low-frequency safety control, so that the product stays focused on lightweight live interaction.
-45. As a 控场人, I want to create a 单选投票, so that I can ask a structured question during the 演讲.
-46. As a 控场人, I want to create multiple 进行中投票 in one 活动, so that I can run more than one structured interaction when needed.
-47. As a 控场人, I want new 投票 to appear first by default, so that the latest interaction is prominent.
-48. As a 控场人, I want to adjust 投票排序, so that 观众视图 and 展示视图 show polls in the intended order.
-49. As a 控场人, I want to edit a 投票 before it receives any 投票选择, so that I can correct wording or options.
-50. As a 控场人, I want to delete a 投票 before it receives any 投票选择, so that unused mistakes can be removed cleanly.
-51. As a 控场人, I want a 投票 that has received 投票选择 to become non-editable and non-deletable, so that results remain trustworthy.
-52. As a 控场人, I want to close a 投票, so that it no longer accepts 投票选择 but can still show results.
-53. As a 控场人, I want to see 投票结果 as both percentages and raw counts, so that I can interpret live response volume accurately.
-54. As a 控场人, I want 主持控制台 updates to arrive without manual refresh, so that I can manage the 活动 during the live moment.
-55. As a 控场人, I want to export 活动 data as CSV, so that I can review 观众问题, 问题点赞, 投票, 投票选项, and 投票结果 after the 演讲.
-56. As a 演讲者, I want to use the 主持控制台 during a 演讲, so that I can choose which audience questions to answer.
-57. As a 演讲者, I want to see which 观众问题 have the most 问题点赞, so that I can focus on shared audience interest.
-58. As a 演讲者, I want to see 投票结果 in the 主持控制台, so that I can adapt the 演讲 based on audience responses.
-59. As a 演讲者, I want to keep the product separate from full 演讲 management, so that the tool stays focused on live interaction.
-60. As a 现场观众, I want 展示视图 to show joining information with 访问码 and QR code, so that additional 观众 can join during the 演讲.
-61. As a 现场观众, I want 展示视图 to show visible and unanswered 观众问题 in 问题排序, so that the audience can follow the most relevant questions.
-62. As a 现场观众, I want 展示视图 to give 置顶问题 visual emphasis, so that the audience can track what the 控场人 has prioritized.
-63. As a 现场观众, I want 展示视图 to exclude hidden and answered questions from the main wall, so that the projected view stays clear.
-64. As a 现场观众, I want 展示视图 to show 投票结果 as percentages, so that the audience can understand aggregate responses without needing raw counts.
-65. As a 现场观众, I want 展示视图 updates to appear within 1-2 seconds, so that the projected content feels live.
-66. As a product owner, I want the first version to target about 200 active 观众会话 per 活动, so that scope and implementation choices fit the expected live usage.
-67. As a product owner, I want the first version to use only a few example 主持账号 if needed, so that account management does not distract from the core live interaction.
-68. As a product owner, I want the UI to be allowed to ship in Chinese first, so that the MVP can focus on core behavior before full internationalization.
-69. As a product owner, I want not to commit to a specific near-real-time transport in the product model, so that implementation can choose the simplest reliable mechanism.
-70. As a product owner, I want deleted 活动 data to be retainable, so that soft deletion does not imply permanent data destruction.
+
+### 主持账号 - 问题管理
+
+38. As a 主持账号, I want to view incoming 观众问题 in the 主持控制台, so that I can manage the live question flow.
+39. As a 主持账号, I want to pin a 观众问题, so that it appears before normal 问题排序 in 观众视图 and 展示视图.
+40. As a 主持账号, I want to unpin a 置顶问题, so that it returns to normal ordering.
+41. As a 主持账号, I want to mark a 观众问题 as an 已回答问题, so that it leaves the main visible question list.
+42. As a 主持账号, I want to mark an 已回答问题 as not answered, so that it can return to the pending question flow.
+43. As a 主持账号, I want to hide a 观众问题, so that I can remove low-quality or inappropriate content from public views.
+44. As a 主持账号, I want hidden content to be treated as a low-frequency safety control, so that the product stays focused on lightweight live interaction.
+45. As a 主持账号, I want to use the 主持控制台 during a 演讲, so that I can choose which audience questions to answer.
+46. As a 主持账号, I want to see which 观众问题 have the most 问题点赞, so that I can focus on shared audience interest.
+
+### 主持账号 - 投票管理
+
+47. As a 主持账号, I want to create a 单选投票, so that I can ask a structured question during the 演讲.
+48. As a 主持账号, I want to create multiple 进行中投票 in one 活动, so that I can run more than one structured interaction when needed.
+49. As a 主持账号, I want new 投票 to appear first by default, so that the latest interaction is prominent.
+50. As a 主持账号, I want to adjust 投票排序, so that 观众视图 and 展示视图 show polls in the intended order.
+51. As a 主持账号, I want to edit a 投票 before it receives any 投票选择, so that I can correct wording or options.
+52. As a 主持账号, I want to delete a 投票 before it receives any 投票选择, so that unused mistakes can be removed cleanly.
+53. As a 主持账号, I want a 投票 that has received 投票选择 to become non-editable and non-deletable, so that results remain trustworthy.
+54. As a 主持账号, I want to close a 投票, so that it no longer accepts 投票选择 but can still show results.
+55. As a 主持账号, I want to see 投票结果 as both percentages and raw counts, so that I can interpret live response volume accurately.
+56. As a 主持账号, I want 主持控制台 updates to arrive without manual refresh, so that I can manage the 活动 during the live moment.
+57. As a 主持账号, I want to export 活动 data as CSV, so that I can review 观众问题, 问题点赞, 投票, 投票选项, and 投票结果 after the 演讲.
+58. As a 主持账号, I want to see 投票结果 in the 主持控制台, so that I can adapt the 演讲 based on audience responses.
+
+### 现场观众 - 展示视图
+
+59. As a 现场观众, I want 展示视图 to show joining information with 访问码 and QR code, so that additional 观众 can join during the 演讲.
+60. As a 现场观众, I want 展示视图 to show visible and unanswered 观众问题 in 问题排序, so that the audience can follow the most relevant questions.
+61. As a 现场观众, I want 展示视图 to give 置顶问题 visual emphasis, so that the audience can track what the 主持账号 has prioritized.
+62. As a 现场观众, I want 展示视图 to exclude hidden and answered questions from the main wall, so that the projected view stays clear.
+63. As a 现场观众, I want 展示视图 to show 投票结果 as percentages, so that the audience can understand aggregate responses without needing raw counts.
+64. As a 现场观众, I want 展示视图 updates to appear within 1-2 seconds, so that the projected content feels live.
+
+### 主持账号 - 产品边界与发布约束
+
+65. As a 主持账号, I want to keep the product separate from full 演讲 management, so that the tool stays focused on live interaction.
+66. As a 主持账号, I want the first version to target about 200 active 观众会话 per 活动, so that scope and implementation choices fit the expected live usage.
+67. As a 主持账号, I want the first version to use only a few example 主持账号 if needed, so that account management does not distract from the core live interaction.
+68. As a 主持账号, I want the UI to be allowed to ship in Chinese first, so that the MVP can focus on core behavior before full internationalization.
+69. As a 主持账号, I want not to commit to a specific near-real-time transport in the product model, so that implementation can choose the simplest reliable mechanism.
+70. As a 主持账号, I want deleted 活动 data to be retainable, so that soft deletion does not imply permanent data destruction.
 
 ## Implementation Decisions
 
@@ -113,7 +136,7 @@
 - Each 观众会话 can contribute at most one 问题点赞 to a given 观众问题.
 - Like cancellation may exist, but it is not a first-version priority.
 - 隐藏问题 is a low-priority moderation control for the first version. The product does not require pre-publication review before questions appear.
-- 投票 is a structured question created by a 控场人 or 演讲者 from the 主持控制台.
+- 投票 is a structured question created by a 主持账号 from the 主持控制台.
 - The MVP supports 单选投票 only. Each 观众会话 can select one 投票选项 per 投票.
 - A 观众会话 can modify its 投票选择 until the 投票 is closed.
 - An 活动 can have multiple 进行中投票, and the product does not impose a product-level limit on the number of polls per activity.
@@ -162,3 +185,5 @@
 - The domain glossary in the repository is authoritative for naming. Use 活动, 观众会话, 访问码, 观众视图, 展示视图, 主持控制台, 问题点赞, 投票选择, and 活动导出 instead of avoided terms such as room, channel, message, score, report, dashboard, or meeting.
 - The ADR “已结束活动不可重新开启” is a hard constraint for this PRD. Any implementation that allows an 已结束活动 to become a 进行中活动 again conflicts with the current project decision.
 - The current PRD is ready to be published to the issue tracker with the `ready-for-agent` label once GitHub CLI network access is available.
+
+

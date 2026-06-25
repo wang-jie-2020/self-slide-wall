@@ -16,3 +16,4 @@
 - SQLite 单文件串行写入，不适合无服务器环境（Vercel）。MVP 阶段本地调试优先，上线需迁移数据库或部署方式
 - 短轮询在 200 活跃会话、2s 间隔下约 100 req/s
 - Prisma 切换数据源（SQLite → PG）只需改 `datasource` 配置
+
