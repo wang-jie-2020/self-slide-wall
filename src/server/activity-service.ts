@@ -656,9 +656,6 @@ export async function closePoll(pollId: string) {
   if (poll.isClosed) {
     throw new RequestError("投票已关闭。", 409);
   }
-  if (poll._count.votes === 0) {
-    throw new RequestError("没有投票选择的投票无法关闭。可以删除投票。", 409);
-  }
 
   const updated = await prisma.poll.update({
     where: { id: poll.id },

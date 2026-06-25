@@ -499,18 +499,20 @@ describe("issue #8 poll ordering, closing, and trust rules", () => {
     expect(closeBody.isClosed).toBe(true);
   });
 
-  it("rejects closing a poll that has no votes", async () => {
+  it("allows closing a poll that has no votes", async () => {
     const activity = await createDraftActivity();
     await moveActivity(activity.id, "start");
 
-    const { body: pollBody } = await createPoll(activity.id, "无票不可关", ["A", "B"]);
+    const { body: pollBody } = await createPoll(activity.id, "无票也可关", ["A", "B"]);
     const poll = pollBody.poll!;
 
     const closeRes = await updateHostPoll(
       patchRequest(`http://localhost/api/host/polls/${poll.id}`, { action: "close" }),
       routePollId(poll.id)
     );
-    expect(closeRes.status).toBe(409);
+    expect(closeRes.status).toBe(200);
+    const closeBody = (await json(closeRes)) as { isClosed: boolean };
+    expect(closeBody.isClosed).toBe(true);
   });
 
   it("prevents voting on a closed poll", async () => {

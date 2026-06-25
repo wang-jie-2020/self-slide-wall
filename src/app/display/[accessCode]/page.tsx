@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import { useCallback, useState } from "react";
 import useSWR from "swr";
 
 type AudienceQuestion = {
@@ -9,6 +10,8 @@ type AudienceQuestion = {
   displayName: string | null;
   createdAt: string;
   isPinned: boolean;
+  isAnswered: boolean;
+  isHidden: boolean;
   likeCount: number;
 };
 
@@ -53,16 +56,61 @@ function PollBar({ percentage }: { percentage: number }) {
 export default function DisplayPage() {
   const params = useParams<{ accessCode: string }>();
   const accessCode = params.accessCode;
-  const { data, isLoading } = useSWR<{ activity: DisplayActivity }>(
+  const { data, isLoading, mutate } = useSWR<{ activity: DisplayActivity }>(
     accessCode ? `/api/display/activities/${accessCode}` : null,
     fetcher,
     { refreshInterval: 2000 }
   );
 
-  const { data: pollData } = useSWR<{ polls: DisplayPoll[] }>(
+  const { data: pollData, mutate: mutatePolls } = useSWR<{ polls: DisplayPoll[] }>(
     accessCode ? `/api/display/activities/${accessCode}/polls` : null,
     fetcher,
     { refreshInterval: 2000 }
+  );
+
+  const [busyQuestionId, setBusyQuestionId] = useState<string | null>(null);
+  const [busyPollId, setBusyPollId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const moderateQuestion = useCallback(
+    async (questionId: string, action: string) => {
+      setActionError(null);
+      setBusyQuestionId(questionId);
+      const response = await fetch(
+        `/api/display/questions/${questionId}/moderate`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action }),
+        }
+      );
+      if (!response.ok) {
+        const body = (await response.json()) as { error?: string };
+        setActionError(body.error ?? "控场操作失败。");
+      }
+      setBusyQuestionId(null);
+      await mutate();
+    },
+    [mutate]
+  );
+
+  const closePollMutation = useCallback(
+    async (pollId: string) => {
+      setActionError(null);
+      setBusyPollId(pollId);
+      const response = await fetch(`/api/display/polls/${pollId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "close" }),
+      });
+      if (!response.ok) {
+        const body = (await response.json()) as { error?: string };
+        setActionError(body.error ?? "关闭投票失败。");
+      }
+      setBusyPollId(null);
+      await mutatePolls();
+    },
+    [mutatePolls]
   );
 
   return (
@@ -97,6 +145,9 @@ export default function DisplayPage() {
 
           <div className="flex flex-col gap-6">
             {/* Polls section */}
+            {actionError ? (
+              <p className="text-sm text-red-400">{actionError}</p>
+            ) : null}
             {(pollData?.polls ?? []).length > 0 ? (
               <div className="flex flex-col gap-4">
                 <h2 className="text-3xl font-semibold">投票结果</h2>
@@ -113,9 +164,19 @@ export default function DisplayPage() {
                             已关闭
                           </span>
                         ) : (
-                          <span className="rounded-sm bg-emerald-800 px-2 py-0.5 text-xs font-medium text-emerald-200">
-                            进行中
-                          </span>
+                          <>
+                            <span className="rounded-sm bg-emerald-800 px-2 py-0.5 text-xs font-medium text-emerald-200">
+                              进行中
+                            </span>
+                            <button
+                              className="rounded-sm border border-stone-600 px-2 py-1 text-xs text-stone-300 disabled:opacity-40"
+                              disabled={busyPollId === poll.id}
+                              onClick={() => void closePollMutation(poll.id)}
+                              type="button"
+                            >
+                              关闭投票
+                            </button>
+                          </>
                         )}
                       </div>
                       <p className="mt-1 text-sm text-stone-400">
@@ -163,6 +224,47 @@ export default function DisplayPage() {
                           ♥ {question.likeCount}
                         </span>
                       </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {question.isPinned ? (
+                          <button
+                            className="rounded-sm border border-stone-600 px-2 py-1 text-xs text-stone-300 disabled:opacity-40"
+                            disabled={busyQuestionId === question.id}
+                            onClick={() => void moderateQuestion(question.id, "unpin")}
+                            type="button"
+                          >
+                            取消置顶
+                          </button>
+                        ) : (
+                          <button
+                            className="rounded-sm border border-stone-600 px-2 py-1 text-xs text-stone-300 disabled:opacity-40"
+                            disabled={busyQuestionId === question.id}
+                            onClick={() => void moderateQuestion(question.id, "pin")}
+                            type="button"
+                          >
+                            置顶
+                          </button>
+                        )}
+                        {!question.isAnswered ? (
+                          <button
+                            className="rounded-sm border border-stone-600 px-2 py-1 text-xs text-stone-300 disabled:opacity-40"
+                            disabled={busyQuestionId === question.id}
+                            onClick={() => void moderateQuestion(question.id, "answer")}
+                            type="button"
+                          >
+                            标记回答
+                          </button>
+                        ) : null}
+                        {!question.isHidden ? (
+                          <button
+                            className="rounded-sm border border-red-800 px-2 py-1 text-xs text-red-400 disabled:opacity-40"
+                            disabled={busyQuestionId === question.id}
+                            onClick={() => void moderateQuestion(question.id, "hide")}
+                            type="button"
+                          >
+                            隐藏
+                          </button>
+                        ) : null}
+                      </div>
                     </li>
                   ))}
                 </ul>
